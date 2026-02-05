@@ -18,6 +18,9 @@ internal static class Program
         {
             bool containerMode = !(args.Length > 0 && args[0] == "interactive");
 
+            Console.WriteLine("Microsoft Learn Agent - Lab 02 (Develop an AI agent)");
+            Console.WriteLine(containerMode ? "Mode: container" : "Mode: interactive");
+
             // Enable OpenTelemetry tracing for visualization
             ConfigureObservability();
 
@@ -36,7 +39,7 @@ internal static class Program
 
         var resourceBuilder = OpenTelemetry
             .Resources.ResourceBuilder.CreateDefault()
-            .AddService("WorkflowSample");
+            .AddService("MSLearnAgent.Lab02");
 
         s_tracerProvider = OpenTelemetry
             .Sdk.CreateTracerProviderBuilder()

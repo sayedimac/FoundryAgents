@@ -1,25 +1,23 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <EnablePreviewFeatures>true</EnablePreviewFeatures>
   </PropertyGroup>
+
   <ItemGroup>
-    <!-- New Foundry SDK (Conversations + Responses API) -->
-    <PackageReference Include="Azure.AI.Projects" Version="1.2.*-*" />
-    <PackageReference Include="Azure.AI.Projects.OpenAI" Version="1.*-*" />
-    <PackageReference Include="Azure.Identity" Version="1.*" />
+    <PackageReference Include="Microsoft.Agents.AI.A2A" Version="1.*-*" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.*" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.*" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.*" />
-    <PackageReference Include="OpenTelemetry" Version="1.*" />
-    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.*" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.*" />
   </ItemGroup>
+
   <ItemGroup>
     <None Update="appsettings.Development.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
 </Project>
