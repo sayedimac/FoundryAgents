@@ -27,8 +27,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FoundryWorkflowDemo", "08-f
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FoundryIQClient", "09-foundry-iq\FoundryIQClient\FoundryIQClient.csproj", "{6E218040-630B-4341-B74C-2AE91F8FAE04}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AgentWebApp", "AgentWebApp.csproj", "{3D1D88B4-5A1C-4B7E-9D1A-29A37F0D07B4}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
