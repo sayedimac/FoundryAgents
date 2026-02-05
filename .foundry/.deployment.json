@@ -1,9 +1,0 @@
-{
-  "hostedAgentDeployOptions": {
-    "dockerContextPath": "d:\\Repos\\HostedAgent\\GitHubAgent",
-    "dockerfilePath": "d:\\Repos\\HostedAgent\\GitHubAgent\\Dockerfile",
-    "agentName": "githubagent",
-    "cpu": "1.0",
-    "memory": "2.0Gi"
-  }
-}
