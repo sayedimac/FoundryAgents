@@ -1,11 +1,11 @@
 # Lab 02 Copilot Instructions - Develop an AI agent
 
-Project: `Labfiles/02-build-ai-agent/dotnet/GitHubAgent`
+Project: `01-simple-agent/GitHubAgent` (maps to Learn Lab 02)
 
 ## Run
 
 ```powershell
-cd .\Labfiles\02-build-ai-agent\dotnet\GitHubAgent
+cd .\01-simple-agent\GitHubAgent
 
 dotnet build
 # interactive

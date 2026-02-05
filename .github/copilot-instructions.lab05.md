@@ -1,6 +1,6 @@
-# Lab 05 Copilot Instructions - Agent orchestration (Agent Framework)
+# Lab 05 Copilot Instructions - Agent orchestration
 
-Folder: `Labfiles/05-agent-orchestration/dotnet`
+Folder: `06-orchestration` (maps to Learn Lab 05)
 
 Goal:
 
@@ -18,5 +18,5 @@ Goal:
    - Optional: `AZURE_OPENAI_KEY` (or `Azure:OpenAIKey`). If omitted, uses `AzureCliCredential`.
 2. Authenticate (if not using an API key): `az login`
 3. Build/run:
-   - `dotnet build Labfiles/05-agent-orchestration/dotnet/Lab05.sln`
-   - `dotnet run --project Labfiles/05-agent-orchestration/dotnet/CustomerFeedbackOrchestration/CustomerFeedbackOrchestration.csproj`
+   - `dotnet build 06-orchestration/Lab05.sln`
+   - `dotnet run --project 06-orchestration/CustomerFeedbackOrchestration/CustomerFeedbackOrchestration.csproj`

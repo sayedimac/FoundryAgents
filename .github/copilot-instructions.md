@@ -1,19 +1,29 @@
-# Repo Copilot Instructions (mslearn-ai-agents / .NET 10)
+# Repo Copilot Instructions (Azure AI Foundry Agents labs / .NET)
 
-This workspace mirrors the Microsoft Learning labs:
+This workspace follows the Microsoft Learn path:
+https://learn.microsoft.com/en-us/training/paths/develop-ai-agents-on-azure/
+
+Labs and assets:
 https://microsoftlearning.github.io/mslearn-ai-agents/
 
 ## Structure
 
-- Each lab is under `Labfiles/<lab-id>/dotnet/<project>`
-- All projects target `net10.0`
-- Foundry/Agent Service samples use the **new Foundry SDK** (`Azure.AI.Projects` + `Azure.AI.Projects.OpenAI`) and the **Responses** API.
+- Lab folders live directly under the repo root: `01-*`, `02-*`, …
+- All .NET projects target `net10.0` and enable preview features.
+- Azure AI Foundry samples use the **Azure AI Foundry Projects SDK** (`Azure.AI.Projects` + `Azure.AI.Projects.OpenAI`) and the **Responses** API.
+
+## Where the agent runs (hosting)
+
+Be explicit about the runtime when writing instructions or code:
+
+- **Local run**: `dotnet run` executes on the developer machine and calls Azure AI Foundry over HTTPS.
+- **Hosted Agent**: after deployment, the agent runs in the Foundry project’s **capability host** (remote container runtime). Authentication is typically via managed identity.
 
 ## Common configuration
 
-Most apps read configuration from (in order):
+Most apps read configuration from:
 
-1. `appsettings.Development.json` (optional)
+1. `appsettings.Development.json` (local-only)
 2. Environment variables
 
 Common keys:
@@ -23,11 +33,11 @@ Common keys:
 
 ## Build / run
 
-- Prefer `dotnet build` at the solution level (each lab folder has its own `.sln`).
-- For interactive console apps, run with `dotnet run`.
+- Prefer `dotnet build` on the root [GitHubAgent.sln](../GitHubAgent.sln) or the lab’s local `.sln`.
+- For interactive console apps, prefer `dotnet run -- interactive` when supported.
 
 ## Coding conventions
 
 - Keep labs independent (no shared project references unless necessary).
-- Prefer minimal, readable samples over large abstractions.
-- If using preview APIs (Foundry SDK), keep `<EnablePreviewFeatures>true</EnablePreviewFeatures>`.
+- Prefer minimal, readable samples over heavy abstractions.
+- Preserve preview settings used by the labs (`<EnablePreviewFeatures>true</EnablePreviewFeatures>`).

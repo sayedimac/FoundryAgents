@@ -1,6 +1,8 @@
-# Writer-Reviewer Hosted Agent Sample
+# Writer-Reviewer Hosted Agent Sample (Azure AI Foundry)
 
-This sample demonstrates the construction of a hosted agent workflow using the Agent Framework. It features two agents—a "Writer" and a "Reviewer"—integrated in a streamlined, one-way workflow to illustrate best practices for agent orchestration and interaction.
+This sample corresponds to the Microsoft Learn path **Develop AI agents on Azure** (Learn Lab 02).
+
+It demonstrates a small multi-agent workflow (Writer + Reviewer) built on the **Azure AI Foundry Projects SDK** (`Azure.AI.Projects` + `Azure.AI.Projects.OpenAI`) using the **Responses API**.
 
 ## Project Structure
 
@@ -9,16 +11,21 @@ This sample demonstrates the construction of a hosted agent workflow using the A
 | `WorkflowCore.cs`              | Workflow Logic        | Implements the end-to-end workflow, orchestrating interactions between Writer and Reviewer agents          |
 | `Program.cs`                   | Application Entry     | Configures and launches the hosted agent, manages command-line arguments, and initiates the workflow       |
 | `appsettings.Development.json` | Environment Settings  | Local development settings. Contains Microsoft Foundry Project endpoint and model deployment configuration |
-| `GitHubAgent.csproj`         | Project Configuration | Specifies NuGet dependencies and build parameters                                                          |
+| `GitHubAgent.csproj`           | Project Configuration | Specifies NuGet dependencies and build parameters                                                          |
 
 ## Prerequisites
 
-- .NET 9 SDK or higher.
-- A Microsoft Foundry Project and a model deployment.
+- .NET 10 SDK (this project targets `net10.0`).
+- An Azure AI Foundry project endpoint and a model deployment name.
+
+## Where is this agent hosted?
+
+- **Local dev**: when you run `dotnet run`, the app runs on your machine and calls Azure AI Foundry over HTTPS.
+- **Hosted Agent (remote)**: when you deploy via the Foundry VS Code extension, the app is packaged as a container and runs remotely in your Foundry project’s **capability host**.
 
 ## Setup and Installation
 
-1. Download and install the .NET 9 SDK from the [official .NET website](https://dotnet.microsoft.com/download).
+1. Install the .NET 10 SDK from the [official .NET website](https://dotnet.microsoft.com/download).
 
 2. Restore NuGet packages.
 
@@ -27,8 +34,7 @@ This sample demonstrates the construction of a hosted agent workflow using the A
    ```
 
 3. Local development configuration
-
-   - Create or update `appsettings.Development.json` with your Microsoft Foundry Project configuration for local development only:
+   - Create or update `appsettings.Development.json` with your Azure AI Foundry project configuration for local development only:
 
    ```json
    {
@@ -76,14 +82,16 @@ To run the agent in container mode:
 > **Note**: Open the local playground before starting the container agent to ensure the visualization functions correctly.
 
 ## Deployment
- 
+
 **Preparation (required)**
 
-- Before running the `Deploy Hosted Agent` command, create or update a `.env` file at the workspace root with the production/container values your application expects (for example the Foundry project endpoint and model deployment name). The extension reads this `.env` and forwards it to the hosted agent runtime during creation. Example `.env` entries:
+- Before running the `Microsoft Foundry: Deploy Hosted Agent` command, create or update a `.env` file at the workspace root with the production/container environment variables the app expects.
+
+This app reads configuration via `AddEnvironmentVariables()`, so the recommended `.env` keys are the same as the environment variable names:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT="https://YOUR-RESOURCE.services.ai.azure.com/api/projects/YOUR-PROJECT"
-AZURE_AI_MODEL_DEPLOYMENT_NAME="YOUR-MODEL-DEPLOYMENT"
+Azure__ProjectEndpoint="https://YOUR-RESOURCE.services.ai.azure.com/api/projects/YOUR-PROJECT"
+Azure__ModelDeploymentName="YOUR-MODEL-DEPLOYMENT"
 ```
 
 - Do not commit `.env` to source control if it contains secrets; prefer secure stores like Key Vault for secrets.
@@ -105,11 +113,12 @@ To deploy the hosted agent:
 4. After deployment completes, the hosted agent appears under the `Hosted Agents (Preview)` section of the extension tree. You can select the agent there to view details and test it using the integrated playground.
 
 **Important:**
+
 - The extension only reads a `.env` file located at the first workspace folder root and forwards its content to the remote hosted agent runtime.
 
 ## MSI Configuration in the Azure Portal
 
-This sample requires the Microsoft Foundry Project to authenticate using a Managed Identity when running remotely in Azure. Grant the project's managed identity the required permissions by assigning the built-in [Azure AI User](https://aka.ms/foundry-ext-project-role) role.
+This sample typically uses a managed identity when running remotely as a Hosted Agent. Grant the Foundry project/capability host identity the required permissions by assigning the built-in [Azure AI User](https://aka.ms/foundry-ext-project-role) role.
 
 To configure the Managed Identity:
 
@@ -124,5 +133,5 @@ To configure the Managed Identity:
 
 ## Additional Resources
 
-- [Microsoft Agents Framework](https://learn.microsoft.com/en-us/agent-framework/overview/agent-framework-overview)
+- [Develop AI agents on Azure (learning path)](https://learn.microsoft.com/en-us/training/paths/develop-ai-agents-on-azure/)
 - [Managed Identities for Azure Resources](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/)

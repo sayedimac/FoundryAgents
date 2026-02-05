@@ -1,10 +1,10 @@
-# Lab 04 Copilot Instructions - Microsoft Agent Framework SDK
+# Lab 04 Copilot Instructions - Semantic Kernel
 
-Folder: `Labfiles/04-semantic-kernel/dotnet`
+Folder: `05-semantic-kernel` (maps to Learn Lab 04)
 
 Goal:
 
-- Build an expense-claim processing agent using the Microsoft Agent Framework SDK.
+- Build an expense-claim processing agent using Semantic Kernel.
 
 ## Status
 
@@ -18,5 +18,5 @@ Goal:
    - Optional: `AZURE_OPENAI_KEY` (or `Azure:OpenAIKey`). If omitted, uses `AzureCliCredential`.
 2. Authenticate (if not using an API key): `az login`
 3. Build/run:
-   - `dotnet build Labfiles/04-semantic-kernel/dotnet/Lab04.sln`
-   - `dotnet run --project Labfiles/04-semantic-kernel/dotnet/ExpenseClaimAgent/ExpenseClaimAgent.csproj`
+   - `dotnet build 05-semantic-kernel/Lab04.sln`
+   - `dotnet run --project 05-semantic-kernel/ExpenseClaimAgent/ExpenseClaimAgent.csproj`

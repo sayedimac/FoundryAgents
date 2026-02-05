@@ -1,11 +1,11 @@
 # Lab 08 Copilot Instructions - Workflow in Microsoft Foundry
 
-Project: `Labfiles/08-build-workflow-ms-foundry/dotnet/FoundryWorkflowDemo`
+Project: `08-foundry-workflow/FoundryWorkflowDemo` (maps to Learn Lab 08)
 
 ## Run
 
 ```powershell
-cd .\Labfiles\08-build-workflow-ms-foundry\dotnet
+cd .\08-foundry-workflow
 
 dotnet build .\Lab08.sln
 cd .\FoundryWorkflowDemo

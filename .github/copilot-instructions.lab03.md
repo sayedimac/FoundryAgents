@@ -1,6 +1,6 @@
 # Lab 03 Copilot Instructions - Custom functions
 
-Folder: `Labfiles/03-agent-custom-functions/dotnet`
+Folder: `02-custom-functions` (maps to Learn Lab 03)
 
 Planned projects:
 

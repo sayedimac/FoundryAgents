@@ -1,6 +1,6 @@
 # Lab 03c Copilot Instructions - Remote MCP (Microsoft Learn MCP)
 
-Project: `Labfiles/03c-use-agent-tools-with-mcp/dotnet/MsLearnMcpAgent`
+Project: `04-mcp-tools/MsLearnMcpAgent` (maps to Learn Lab 03c)
 
 ## Config
 
@@ -11,7 +11,7 @@ Project: `Labfiles/03c-use-agent-tools-with-mcp/dotnet/MsLearnMcpAgent`
 ## Run
 
 ```powershell
-cd .\Labfiles\03c-use-agent-tools-with-mcp\dotnet
+cd .\04-mcp-tools
 
 dotnet build .\Lab03c.sln
 cd .\MsLearnMcpAgent

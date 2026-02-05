@@ -1,6 +1,6 @@
 # Lab 06 Copilot Instructions - Remote agents with A2A protocol
 
-Folder: `Labfiles/06-multi-remote-agents-with-a2a/dotnet`
+Folder: `07-a2a` (maps to Learn Lab 06)
 
 Goal:
 
@@ -18,6 +18,6 @@ Goal:
 2. Authenticate: `az login`
 3. Start the host (example):
    - `set ASPNETCORE_URLS=http://localhost:5000`
-   - `dotnet run --project Labfiles/06-multi-remote-agents-with-a2a/dotnet/A2AHost/A2AHost.csproj`
+   - `dotnet run --project 07-a2a/A2AHost/A2AHost.csproj`
 4. Run the client:
-   - `dotnet run --project Labfiles/06-multi-remote-agents-with-a2a/dotnet/A2AClient/A2AClient.csproj`
+   - `dotnet run --project 07-a2a/A2AClient/A2AClient.csproj`

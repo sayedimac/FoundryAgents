@@ -1,6 +1,6 @@
 # Lab 03b Copilot Instructions - Multi-agent with Foundry
 
-Project: `Labfiles/03b-build-multi-agent-solution/dotnet/FrontEndAgent`
+Project: `03-multi-agent/FrontEndAgent` (maps to Learn Lab 03b)
 
 ## Config
 
@@ -11,7 +11,7 @@ Project: `Labfiles/03b-build-multi-agent-solution/dotnet/FrontEndAgent`
 ## Run
 
 ```powershell
-cd .\Labfiles\03b-build-multi-agent-solution\dotnet
+cd .\03-multi-agent
 
 dotnet build .\Lab03b.sln
 cd .\FrontEndAgent

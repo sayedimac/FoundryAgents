@@ -1,6 +1,6 @@
 # Lab 09 Copilot Instructions - Foundry IQ integration
 
-Project: `Labfiles/09-integrate-agent-with-foundry-iq/dotnet/FoundryIQClient`
+Project: `09-foundry-iq/FoundryIQClient` (maps to Learn Lab 09)
 
 ## Assumption
 
@@ -14,7 +14,7 @@ Project: `Labfiles/09-integrate-agent-with-foundry-iq/dotnet/FoundryIQClient`
 ## Run
 
 ```powershell
-cd .\Labfiles\09-integrate-agent-with-foundry-iq\dotnet
+cd .\09-foundry-iq
 
 dotnet build .\Lab09.sln
 cd .\FoundryIQClient
