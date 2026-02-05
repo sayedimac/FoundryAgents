@@ -1,6 +1,6 @@
 ﻿using System.Text;
+using Azure;
 using Azure.AI.OpenAI;
-using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -31,25 +31,15 @@ IChatClient chatClient = openAiClient
 
 ChatClientAgent summarizer = new(
     chatClient,
-    "You summarize customer feedback for a product team. Output 3-5 bullet points. Be faithful to the input.")
-{
-    Id = "Summarizer"
-};
+    "You summarize customer feedback for a product team. Output 3-5 bullet points. Be faithful to the input.");
 
 ChatClientAgent sentiment = new(
     chatClient,
-    "You analyze customer feedback sentiment. Output JSON only: { \"sentiment\": \"positive\"|\"neutral\"|\"negative\", \"confidence\": number (0-1), \"rationale\": string }.")
-{
-    Id = "Sentiment"
-};
+    "You analyze customer feedback sentiment. Output JSON only: { \"sentiment\": \"positive\"|\"neutral\"|\"negative\", \"confidence\": number (0-1), \"rationale\": string }.");
 
 ChatClientAgent actionPlanner = new(
     chatClient,
-    "You are a customer support + product triage agent. Based on the conversation so far, output JSON only: { \"priority\": \"p0\"|\"p1\"|\"p2\", \"actions\": string[], \"owner\": \"support\"|\"engineering\"|\"product\", \"replyToCustomer\": string }."
-)
-{
-    Id = "ActionPlanner"
-};
+    "You are a customer support + product triage agent. Based on the conversation so far, output JSON only: { \"priority\": \"p0\"|\"p1\"|\"p2\", \"actions\": string[], \"owner\": \"support\"|\"engineering\"|\"product\", \"replyToCustomer\": string }.");
 
 Workflow workflow = AgentWorkflowBuilder.BuildSequential(new AIAgent[]
 {
@@ -95,7 +85,7 @@ Console.WriteLine();
 Console.WriteLine("Final conversation:");
 foreach (ChatMessage message in finalConversation)
 {
-    Console.WriteLine($"- {message.Role}: {message.Content}");
+    Console.WriteLine($"- {message.Role}: {message.Text}");
 }
 
 static string GetRequiredSetting(IConfiguration config, params string[] keys)

@@ -10,9 +10,9 @@ Console.WriteLine("Microsoft Learn Agent - Lab 06 (Remote agents with A2A)");
 Console.WriteLine("-----------------------------------------------------");
 
 IConfiguration config = new ConfigurationBuilder()
-	.AddJsonFile("appsettings.Development.json", optional: true)
-	.AddEnvironmentVariables()
-	.Build();
+    .AddJsonFile("appsettings.Development.json", optional: true)
+    .AddEnvironmentVariables()
+    .Build();
 
 string baseUrl = config["A2A:HostBaseUrl"] ?? "http://localhost:5000";
 string titlePath = config["A2A:TitleAgentPath"] ?? "/a2a/title";
@@ -28,13 +28,14 @@ Console.Write("Request: ");
 string? request = Console.ReadLine();
 if (string.IsNullOrWhiteSpace(request))
 {
-	Console.WriteLine("No input provided.");
-	return;
+    Console.WriteLine("No input provided.");
+    return;
 }
 
 Console.WriteLine();
 Console.WriteLine("Routing...");
-string routingJson = await routerAgent.RunAsync(request);
+var routingResponse = await routerAgent.RunAsync(request);
+string routingJson = routingResponse.Text.Trim();
 Console.WriteLine(routingJson);
 
 Console.WriteLine();
@@ -43,15 +44,17 @@ Console.WriteLine("Calling specialist agent...");
 // Simple heuristic: use the model's route field if present.
 string specialistOutput;
 if (routingJson.Contains("\"route\"", StringComparison.OrdinalIgnoreCase)
-	&& routingJson.Contains("outline", StringComparison.OrdinalIgnoreCase))
+    && routingJson.Contains("outline", StringComparison.OrdinalIgnoreCase))
 {
-	specialistOutput = await outlineAgent.RunAsync(request);
-	Console.WriteLine("[outline]");
+    var outlineResponse = await outlineAgent.RunAsync(request);
+    specialistOutput = outlineResponse.Text.Trim();
+    Console.WriteLine("[outline]");
 }
 else
 {
-	specialistOutput = await titleAgent.RunAsync(request);
-	Console.WriteLine("[title]");
+    var titleResponse = await titleAgent.RunAsync(request);
+    specialistOutput = titleResponse.Text.Trim();
+    Console.WriteLine("[title]");
 }
 
 Console.WriteLine(specialistOutput);

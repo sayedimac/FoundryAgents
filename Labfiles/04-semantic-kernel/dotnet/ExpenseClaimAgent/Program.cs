@@ -1,9 +1,10 @@
 ﻿using System.Text;
 using System.Text.Json;
+using Azure;
 using Azure.AI.OpenAI;
-using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using OpenAI;
 
@@ -25,9 +26,13 @@ AzureOpenAIClient client = !string.IsNullOrWhiteSpace(apiKey)
     ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(apiKey))
     : new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential());
 
-AIAgent agent = client
+IChatClient chatClient = client
     .GetChatClient(deploymentName)
-    .AsAIAgent(instructions:
+    .AsIChatClient();
+
+var agent = new ChatClientAgent(
+    chatClient,
+    instructions:
         "You are an expense-claim assistant. Your job is to extract a structured expense claim and recommend a decision. " +
         "Return ONLY valid JSON with no markdown fences.\n\n" +
         "Output schema:\n" +
@@ -47,8 +52,7 @@ AIAgent agent = client
         "- Lodging > 250 USD equivalent: needs_review\n" +
         "- Travel > 500 USD equivalent: needs_review\n" +
         "- If receiptProvided is false and amount > 25: needs_review\n" +
-        "- Fraud indicators: reject")
-    ;
+        "- Fraud indicators: reject");
 
 Console.WriteLine("Paste an expense claim in plain English. End with an empty line.");
 string claimText = ReadMultilineFromStdin();
@@ -59,8 +63,10 @@ if (string.IsNullOrWhiteSpace(claimText))
     return;
 }
 
-string modelJson = await agent.RunAsync(
+var response = await agent.RunAsync(
     "Extract the expense claim and decide. Input:\n" + claimText);
+
+string modelJson = response.Text.Trim();
 
 Console.WriteLine();
 Console.WriteLine("Model output (JSON):");
