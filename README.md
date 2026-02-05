@@ -36,6 +36,12 @@ cd .\01-simple-agent\GitHubAgent
 dotnet run -- interactive
 ```
 
+Run the web app demo (ASP.NET Core):
+
+```powershell
+dotnet run --project .\AgentWebApp.csproj
+```
+
 ## Configuration
 
 Most projects use `appsettings.Development.json` (local-only) and/or environment variables.
