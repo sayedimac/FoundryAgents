@@ -153,7 +153,10 @@ public class AgentService : IAgentService, IAsyncDisposable
         var responseClient = _projectClient.OpenAI.GetProjectResponsesClientForAgent(agent.Name);
 
         // Build conversation context
-        var options = new CreateResponseOptions();
+        var options = new CreateResponseOptions
+        {
+            StreamingEnabled = true
+        };
         foreach (var msg in history.TakeLast(20))
         {
             options.InputItems.Add(msg.Role == "user"
@@ -162,10 +165,20 @@ public class AgentService : IAgentService, IAsyncDisposable
         }
         options.InputItems.Add(ResponseItem.CreateUserMessageItem(prompt));
 
-        // Handle MCP tool approval loop for GitHub agent
+        // Handle MCP tool approval loop for GitHub agent (uses non-streaming API)
         if (agentName == "GitHub")
         {
-            await foreach (var update in HandleMcpStreamingAsync(responseClient, options, cancellationToken))
+            // Create non-streaming options for MCP handling
+            var mcpOptions = new CreateResponseOptions();
+            foreach (var msg in history.TakeLast(20))
+            {
+                mcpOptions.InputItems.Add(msg.Role == "user"
+                    ? ResponseItem.CreateUserMessageItem(msg.Content)
+                    : ResponseItem.CreateAssistantMessageItem(msg.Content));
+            }
+            mcpOptions.InputItems.Add(ResponseItem.CreateUserMessageItem(prompt));
+
+            await foreach (var update in HandleMcpStreamingAsync(responseClient, mcpOptions, cancellationToken))
             {
                 yield return update;
             }
