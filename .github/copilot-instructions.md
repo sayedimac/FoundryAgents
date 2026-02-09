@@ -12,6 +12,24 @@ https://microsoftlearning.github.io/mslearn-ai-agents/
 - All .NET projects target `net10.0` and enable preview features.
 - Azure AI Foundry samples use the **Azure AI Foundry Projects SDK** (`Azure.AI.Projects` + `Azure.AI.Projects.OpenAI`) and the **Responses** API.
 
+## Agent Framework demo context (references)
+
+This repo is used to build demos around **Microsoft Agent Framework** and **Azure AI Foundry**.
+
+- Agent Framework overview (read this first):
+  https://learn.microsoft.com/en-us/agent-framework/overview/agent-framework-overview
+- NuGet: Microsoft.Agents.AI.AzureAI (Agent Framework + Azure AI integration package):
+  https://www.nuget.org/packages/Microsoft.Agents.AI.AzureAI
+- NuGet: Azure.AI.Projects (Azure AI Foundry Projects SDK used by these samples):
+  https://www.nuget.org/packages/Azure.AI.Projects/
+
+When writing or updating code/instructions:
+
+- Treat `Azure.AI.Projects` as the **core Foundry SDK** (project, connections, hosted agent interactions).
+- `Azure.AI.Projects.OpenAI` is the **downstream integration** for calling model deployments.
+- `Azure.Identity` is an **upstream dependency** for auth; prefer `DefaultAzureCredential` patterns.
+- If adding Agent Framework-based samples, consider whether `Microsoft.Agents.AI.AzureAI` adds value vs the existing `Azure.AI.Projects*` approach, and keep the lab/sample minimal.
+
 ## Where the agent runs (hosting)
 
 Be explicit about the runtime when writing instructions or code:

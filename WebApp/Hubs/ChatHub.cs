@@ -9,15 +9,18 @@ public class ChatHub : Hub
 {
     private readonly IAgentService _agentService;
     private readonly IConversationService _conversationService;
+    private readonly IGitHubTokenService _gitHubTokenService;
     private readonly ILogger<ChatHub> _logger;
 
     public ChatHub(
         IAgentService agentService,
         IConversationService conversationService,
+        IGitHubTokenService gitHubTokenService,
         ILogger<ChatHub> logger)
     {
         _agentService = agentService;
         _conversationService = conversationService;
+        _gitHubTokenService = gitHubTokenService;
         _logger = logger;
     }
 
@@ -41,9 +44,21 @@ public class ChatHub : Hub
         var messageId = Guid.NewGuid().ToString();
         var fullResponse = new StringBuilder();
 
+        // Resolve GitHub user token from session (for GitHub agent MCP calls)
+        string? githubToken = null;
+        if (agentName == "GitHub")
+        {
+            var httpContext = Context.GetHttpContext();
+            var appSessionId = httpContext?.Session.GetString("app_session_id");
+            if (!string.IsNullOrEmpty(appSessionId))
+            {
+                githubToken = _gitHubTokenService.GetToken(appSessionId);
+            }
+        }
+
         try
         {
-            await foreach (var update in _agentService.GetStreamingResponseAsync(agentName, message, history))
+            await foreach (var update in _agentService.GetStreamingResponseAsync(agentName, message, history, githubToken))
             {
                 switch (update)
                 {

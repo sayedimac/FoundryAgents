@@ -733,3 +733,44 @@ html, body {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
+
+/* GitHub Auth Prompt */
+.github-auth-prompt .message-body {
+    text-align: center;
+    padding: 24px 16px;
+}
+
+.github-auth-prompt .message-body p {
+    margin: 0 0 12px;
+}
+
+.btn-github-auth {
+    display: inline-flex;
+    align-items: center;
+    padding: 10px 20px;
+    background-color: #24292f;
+    color: #ffffff;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    margin-top: 8px;
+}
+
+.btn-github-auth:hover {
+    background-color: #32383f;
+    color: #ffffff;
+    text-decoration: none;
+}
+
+[data-theme="dark"] .btn-github-auth {
+    background-color: #f0f6fc;
+    color: #24292f;
+}
+
+[data-theme="dark"] .btn-github-auth:hover {
+    background-color: #d0d7de;
+}

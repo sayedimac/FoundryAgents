@@ -17,9 +17,8 @@ public class ChatController : Controller
 
     public async Task<IActionResult> Index()
     {
-        var agents = await _agentService.GetAvailableAgentsAsync();
-        ViewBag.Agents = agents;
-        return View();
+        // Chat is now the default Home/Index page.
+        return RedirectToAction(actionName: "Index", controllerName: "Home");
     }
 
     [HttpPost]

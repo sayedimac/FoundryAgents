@@ -7,9 +7,22 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllersWithViews();
 builder.Services.AddSignalR();
 
+// Session support (used by GitHub OAuth flow)
+builder.Services.AddDistributedMemoryCache();
+builder.Services.AddSession(options =>
+{
+    options.IdleTimeout = TimeSpan.FromHours(2);
+    options.Cookie.HttpOnly = true;
+    options.Cookie.IsEssential = true;
+});
+
+// HTTP client for GitHub OAuth token exchange
+builder.Services.AddHttpClient();
+
 // Register agent and conversation services
 builder.Services.AddSingleton<IAgentService, AgentService>();
 builder.Services.AddSingleton<IConversationService, ConversationService>();
+builder.Services.AddSingleton<IGitHubTokenService, GitHubTokenService>();
 
 var app = builder.Build();
 
@@ -24,6 +37,7 @@ if (!app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseRouting();
 
+app.UseSession();
 app.UseAuthorization();
 
 app.MapStaticAssets();

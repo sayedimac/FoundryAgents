@@ -21,6 +21,29 @@ class ChatApp {
         await this.setupSignalR();
         this.setupEventListeners();
         this.setupMarkdown();
+        this.handleOAuthReturn();
+    }
+
+    handleOAuthReturn() {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('github_auth') === 'success') {
+            const agent = params.get('agent') || 'GitHub';
+            const username = params.get('username');
+
+            // Pre-select the GitHub agent in the dropdown
+            const select = document.getElementById('agentSelect');
+            if (select) {
+                select.value = agent;
+            }
+            this.selectAgent(agent);
+
+            if (username) {
+                this.addSystemMessage(`Connected to GitHub as ${username}`, 'info');
+            }
+
+            // Clean the URL so the query params don't linger
+            window.history.replaceState({}, '', '/');
+        }
     }
 
     loadTheme() {
@@ -326,12 +349,63 @@ class ChatApp {
 
     async selectAgent(agentName) {
         this.currentAgent = agentName;
+
+        // When selecting the GitHub agent, verify the user has authenticated
+        if (agentName === 'GitHub') {
+            const authed = await this.checkGitHubAuth();
+            if (!authed) return; // auth prompt shown; wait for user action
+        }
+
         try {
             await this.connection.invoke('SelectAgent', agentName);
         } catch (error) {
             console.error('Select agent error:', error);
         }
         this.updateAgentDisplay({ name: agentName });
+    }
+
+    async checkGitHubAuth() {
+        try {
+            const response = await fetch('/auth/github/status');
+            const data = await response.json();
+
+            if (!data.authenticated) {
+                this.showGitHubAuthPrompt();
+                return false;
+            }
+
+            this.githubUsername = data.username;
+            return true;
+        } catch (error) {
+            console.error('GitHub auth check failed:', error);
+            // Let the user proceed; MCP calls may still work without auth
+            return true;
+        }
+    }
+
+    showGitHubAuthPrompt() {
+        // Remove any previous auth prompt
+        document.querySelectorAll('.github-auth-prompt').forEach(el => el.remove());
+
+        const messageList = document.getElementById('messageList');
+        const promptEl = document.createElement('div');
+        promptEl.className = 'message message-system github-auth-prompt';
+        promptEl.innerHTML = `
+            <div class="message-content" style="margin-left: 44px;">
+                <div class="message-body">
+                    <p><strong>GitHub Authentication Required</strong></p>
+                    <p>The GitHub agent needs access to your GitHub account to search repositories, issues, and pull requests.</p>
+                    <a href="/auth/github/login?returnUrl=${encodeURIComponent('/')}" class="btn-github-auth">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 8px;">
+                            <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+                        </svg>
+                        Connect GitHub Account
+                    </a>
+                </div>
+            </div>
+        `;
+        messageList.appendChild(promptEl);
+        this.scrollToBottom();
     }
 
     updateAgentDisplay(agentInfo) {

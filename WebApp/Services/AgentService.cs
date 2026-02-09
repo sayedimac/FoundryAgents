@@ -99,25 +99,49 @@ public class AgentService : IAgentService, IAsyncDisposable
                 HasTools = false
             };
 
-            // Create GitHub Agent with MCP (if configured)
-            var mcpUrl = _configuration["Azure:GitHubMcpServerUrl"];
-            if (!string.IsNullOrEmpty(mcpUrl))
+            // Register GitHub agent info (uses model-bound responses client
+            // with the user's OAuth token passed at request time).
+            _agentInfos["GitHub"] = new ChatAgentInfo
+            {
+                Name = "GitHub",
+                Description = "GitHub assistant with MCP tools",
+                Avatar = "G",
+                Capabilities = ["Repository search", "Issue tracking", "Code search", "PR management"],
+                HasTools = true
+            };
+
+            // Ensure the GitHub MCP server label is enabled in the Foundry project.
+            // Some MCP flows validate approvals against project-enabled servers.
+            var gitHubMcpUrl = _configuration["Azure:GitHubMcpServerUrl"];
+            if (!string.IsNullOrEmpty(gitHubMcpUrl))
             {
                 try
                 {
-                    _agents["GitHub"] = await CreateGitHubAgentAsync(deployment, mcpUrl);
-                    _agentInfos["GitHub"] = new ChatAgentInfo
+                    var gitHubMcpTool = ResponseTool.CreateMcpTool(
+                        serverLabel: "github",
+                        serverUri: new Uri(gitHubMcpUrl),
+                        toolCallApprovalPolicy: new McpToolCallApprovalPolicy(
+                            GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
+
+                    var ghDefinition = new PromptAgentDefinition(model: deployment)
                     {
-                        Name = "GitHub",
-                        Description = "GitHub assistant with MCP tools",
-                        Avatar = "G",
-                        Capabilities = ["Repository search", "Issue tracking", "Code search", "PR management"],
-                        HasTools = true
+                        Instructions = """
+                            You are a GitHub MCP tool registration agent.
+                            You do not chat with users; your purpose is to register the GitHub MCP server tool.
+                            """,
+                        Tools = { gitHubMcpTool }
                     };
+
+                    var ghResult = await _projectClient.Agents.CreateAgentVersionAsync(
+                        agentName: "ChatGitHubMcpRegistry",
+                        options: new AgentVersionCreationOptions(ghDefinition));
+                    _agents["GitHubMcpRegistry"] = ghResult.Value;
+                    _logger.LogInformation("Created GitHub MCP registry agent: {Name} v{Version}",
+                        ghResult.Value.Name, ghResult.Value.Version);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to create GitHub agent with MCP. Skipping.");
+                    _logger.LogWarning(ex, "Failed to create GitHub MCP registry agent; MCP approvals may fail if the server is not enabled in the project.");
                 }
             }
 
@@ -134,6 +158,7 @@ public class AgentService : IAgentService, IAsyncDisposable
         string agentName,
         string prompt,
         IEnumerable<ChatMessage> history,
+        string? githubToken = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await InitializeAsync();
@@ -141,6 +166,59 @@ public class AgentService : IAgentService, IAsyncDisposable
         if (_projectClient == null)
         {
             yield return new TextDeltaUpdate("Agent service is not configured. Please set Azure:ProjectEndpoint in configuration.");
+            yield break;
+        }
+
+        // GitHub agent uses a model-bound responses client with the user's
+        // GitHub OAuth token passed via MCP tool for authenticated access.
+        if (agentName == "GitHub")
+        {
+            var deployment = _configuration["Azure:ModelDeploymentName"]
+                ?? throw new InvalidOperationException("Azure:ModelDeploymentName is required");
+            var mcpUrl = _configuration["Azure:GitHubMcpServerUrl"];
+
+            if (string.IsNullOrEmpty(githubToken))
+            {
+                yield return new TextDeltaUpdate("Please sign in with GitHub first to use the GitHub agent.");
+                yield break;
+            }
+
+            var responsesClient = _projectClient.OpenAI.GetProjectResponsesClientForModel(deployment);
+
+            var mcpOptions = new CreateResponseOptions
+            {
+                Instructions = """
+                    You are a helpful GitHub assistant with access to GitHub via MCP.
+                    You can search repositories, issues, pull requests, and code.
+                    Format responses in Markdown. Include relevant links when helpful.
+                    Be concise but informative.
+                    """
+            };
+
+            foreach (var msg in history.TakeLast(20))
+            {
+                mcpOptions.InputItems.Add(msg.Role == "user"
+                    ? ResponseItem.CreateUserMessageItem(msg.Content)
+                    : ResponseItem.CreateAssistantMessageItem(msg.Content));
+            }
+            mcpOptions.InputItems.Add(ResponseItem.CreateUserMessageItem(prompt));
+
+            // Add MCP tool with user's GitHub token for authenticated access
+            if (!string.IsNullOrEmpty(mcpUrl))
+            {
+                var mcpTool = ResponseTool.CreateMcpTool(
+                    serverLabel: "github",
+                    serverUri: new Uri(mcpUrl),
+                    authorizationToken: githubToken,
+                    toolCallApprovalPolicy: new McpToolCallApprovalPolicy(
+                        GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
+                mcpOptions.Tools.Add(mcpTool);
+            }
+
+            await foreach (var update in HandleMcpStreamingAsync(responsesClient, mcpOptions, cancellationToken))
+            {
+                yield return update;
+            }
             yield break;
         }
 
@@ -165,32 +243,11 @@ public class AgentService : IAgentService, IAsyncDisposable
         }
         options.InputItems.Add(ResponseItem.CreateUserMessageItem(prompt));
 
-        // Handle MCP tool approval loop for GitHub agent (uses non-streaming API)
-        if (agentName == "GitHub")
+        await foreach (var update in responseClient.CreateResponseStreamingAsync(options, cancellationToken))
         {
-            // Create non-streaming options for MCP handling
-            var mcpOptions = new CreateResponseOptions();
-            foreach (var msg in history.TakeLast(20))
+            if (update is StreamingResponseOutputTextDeltaUpdate textDelta)
             {
-                mcpOptions.InputItems.Add(msg.Role == "user"
-                    ? ResponseItem.CreateUserMessageItem(msg.Content)
-                    : ResponseItem.CreateAssistantMessageItem(msg.Content));
-            }
-            mcpOptions.InputItems.Add(ResponseItem.CreateUserMessageItem(prompt));
-
-            await foreach (var update in HandleMcpStreamingAsync(responseClient, mcpOptions, cancellationToken))
-            {
-                yield return update;
-            }
-        }
-        else
-        {
-            await foreach (var update in responseClient.CreateResponseStreamingAsync(options, cancellationToken))
-            {
-                if (update is StreamingResponseOutputTextDeltaUpdate textDelta)
-                {
-                    yield return new TextDeltaUpdate(textDelta.Delta);
-                }
+                yield return new TextDeltaUpdate(textDelta.Delta);
             }
         }
     }
@@ -282,33 +339,6 @@ public class AgentService : IAgentService, IAsyncDisposable
             options: new AgentVersionCreationOptions(definition));
 
         _logger.LogInformation("Created agent: {Name} v{Version}", result.Value.Name, result.Value.Version);
-        return result.Value;
-    }
-
-    private async Task<AgentVersion> CreateGitHubAgentAsync(string model, string mcpUrl)
-    {
-        var mcpTool = ResponseTool.CreateMcpTool(
-            serverLabel: "github",
-            serverUri: new Uri(mcpUrl),
-            toolCallApprovalPolicy: new McpToolCallApprovalPolicy(
-                GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
-
-        var definition = new PromptAgentDefinition(model: model)
-        {
-            Instructions = """
-                You are a helpful GitHub assistant with access to GitHub via MCP.
-                You can search repositories, issues, pull requests, and code.
-                Format responses in Markdown. Include relevant links when helpful.
-                Be concise but informative.
-                """,
-            Tools = { mcpTool }
-        };
-
-        var result = await _projectClient!.Agents.CreateAgentVersionAsync(
-            agentName: "ChatGitHubAgent",
-            options: new AgentVersionCreationOptions(definition));
-
-        _logger.LogInformation("Created GitHub agent with MCP: {Name} v{Version}", result.Value.Name, result.Value.Version);
         return result.Value;
     }
 
