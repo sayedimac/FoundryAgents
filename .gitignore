@@ -9,6 +9,13 @@
 # Local developer overrides (do not commit secrets)
 WebApp/appsettings.Local.json
 
+# Local publish output / test artifacts (do not commit)
+WebApp/publish-test/
+WebApp/publish/
+
+# Runtime-generated media outputs (do not commit)
+WebApp/wwwroot/generated/
+
 # User-specific files
 *.rsuser
 *.suo
