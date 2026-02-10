@@ -230,7 +230,20 @@ class ChatApp {
         this.showTypingIndicator();
 
         try {
-            await this.connection.invoke('SendMessage', this.sessionId, this.currentAgent, message);
+            const imagePaths = (this.attachedFiles || [])
+                .filter(a => (a.contentType || '').toLowerCase().startsWith('image/') && a.storagePath)
+                .map(a => a.storagePath);
+
+            await this.connection.invoke('SendMessage', this.sessionId, this.currentAgent, message, imagePaths);
+
+            // Clear attachments after send
+            this.attachedFiles = [];
+            const filePreview = document.getElementById('filePreview');
+            if (filePreview) {
+                filePreview.classList.add('hidden');
+                const previewList = filePreview.querySelector('.file-preview-list');
+                if (previewList) previewList.innerHTML = '';
+            }
         } catch (error) {
             console.error('Send message error:', error);
             this.hideTypingIndicator();

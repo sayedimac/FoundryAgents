@@ -21,7 +21,7 @@ public class ChatHub : Hub
         _logger = logger;
     }
 
-    public async Task SendMessage(string sessionId, string agentName, string message)
+    public async Task SendMessage(string sessionId, string agentName, string message, string[]? imagePaths = null)
     {
         _logger.LogInformation("Received message for session {SessionId} agent {Agent}: {Message}",
             sessionId, agentName, message[..Math.Min(100, message.Length)]);
@@ -51,7 +51,7 @@ public class ChatHub : Hub
 
         try
         {
-            await foreach (var update in _agentService.GetStreamingResponseAsync(agentName, message, history, githubToken))
+            await foreach (var update in _agentService.GetStreamingResponseAsync(agentName, message, history, imagePaths, githubToken))
             {
                 switch (update)
                 {

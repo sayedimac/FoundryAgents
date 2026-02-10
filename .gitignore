@@ -16,6 +16,9 @@ WebApp/publish/
 # Runtime-generated media outputs (do not commit)
 WebApp/wwwroot/generated/
 
+# User uploaded files (do not commit)
+WebApp/wwwroot/uploads/
+
 # User-specific files
 *.rsuser
 *.suo

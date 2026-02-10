@@ -8,11 +8,13 @@ public class ChatController : Controller
 {
     private readonly IAgentService _agentService;
     private readonly ILogger<ChatController> _logger;
+    private readonly IWebHostEnvironment _environment;
 
-    public ChatController(IAgentService agentService, ILogger<ChatController> logger)
+    public ChatController(IAgentService agentService, ILogger<ChatController> logger, IWebHostEnvironment environment)
     {
         _agentService = agentService;
         _logger = logger;
+        _environment = environment;
     }
 
     public async Task<IActionResult> Index()
@@ -30,8 +32,20 @@ public class ChatController : Controller
             return BadRequest("No file uploaded");
         }
 
+        // Only allow image uploads for now.
+        if (string.IsNullOrWhiteSpace(file.ContentType) || !file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return BadRequest("Only image uploads are supported.");
+        }
+
+        // 5MB limit per file.
+        if (file.Length > 5 * 1024 * 1024)
+        {
+            return BadRequest("File too large. Max 5MB.");
+        }
+
         // Create uploads directory if it doesn't exist
-        var uploadsPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads");
+        var uploadsPath = Path.Combine(_environment.WebRootPath, "uploads");
         Directory.CreateDirectory(uploadsPath);
 
         // Generate unique filename

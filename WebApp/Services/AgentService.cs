@@ -215,10 +215,59 @@ public class AgentService : IAgentService, IAsyncDisposable
         string agentName,
         string prompt,
         IEnumerable<ChatMessage> history,
+        IReadOnlyList<string>? imagePaths = null,
         string? githubToken = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await InitializeAsync();
+
+        // If images are attached, use a multimodal REST call for text agents.
+        // (Media generation agents remain REST-based but do not currently accept image inputs.)
+        if (imagePaths is { Count: > 0 }
+            && agentName is not ("Image" or "Video"))
+        {
+            if (!IsAzureOpenAiConfigured())
+            {
+                yield return new TextDeltaUpdate("Image understanding requires Azure OpenAI REST config. Set AZURE_OPENAI_ENDPOINT (or AzureOpenAI:Endpoint) and set AZURE_API_KEY.");
+                yield break;
+            }
+
+            var loadedImages = TryLoadUploadedImages(imagePaths);
+            if (loadedImages.Count == 0)
+            {
+                yield return new TextDeltaUpdate("No valid image attachments were found.");
+                yield break;
+            }
+
+            yield return new TextDeltaUpdate("Analyzing image(s)...\n");
+
+            string? text = null;
+            string? multimodalError = null;
+            try
+            {
+                text = await GetTextResponseViaRestWithImagesAsync(prompt, history, loadedImages, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Multimodal REST call failed");
+                multimodalError = ex.Message;
+            }
+
+            if (!string.IsNullOrWhiteSpace(multimodalError))
+            {
+                yield return new TextDeltaUpdate($"Image understanding failed: {multimodalError}");
+                yield break;
+            }
+
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                yield return new TextDeltaUpdate("The model returned an empty response.");
+                yield break;
+            }
+
+            yield return new TextDeltaUpdate(text);
+            yield break;
+        }
 
         // REST-based media agents do not require an Azure AI Foundry project client.
         if (agentName == "Image")
@@ -414,6 +463,194 @@ public class AgentService : IAgentService, IAsyncDisposable
                 yield return new TextDeltaUpdate(textDelta.Delta);
             }
         }
+    }
+
+    private sealed record UploadedImage(string ContentType, byte[] Bytes);
+
+    private List<UploadedImage> TryLoadUploadedImages(IReadOnlyList<string> imagePaths)
+    {
+        var result = new List<UploadedImage>();
+        if (string.IsNullOrWhiteSpace(_environment.WebRootPath))
+        {
+            return result;
+        }
+
+        foreach (var raw in imagePaths)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+
+            // Expect paths like /uploads/<file>
+            var normalized = raw.Trim();
+            if (!normalized.StartsWith("/uploads/", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var relative = normalized.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+            var fullPath = Path.GetFullPath(Path.Combine(_environment.WebRootPath, relative));
+
+            // Prevent path traversal: ensure the file stays under wwwroot/uploads
+            var uploadsRoot = Path.GetFullPath(Path.Combine(_environment.WebRootPath, "uploads" + Path.DirectorySeparatorChar));
+            if (!fullPath.StartsWith(uploadsRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!File.Exists(fullPath)) continue;
+
+            var ext = Path.GetExtension(fullPath).ToLowerInvariant();
+            var contentType = ext switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".webp" => "image/webp",
+                ".gif" => "image/gif",
+                _ => ""
+            };
+            if (string.IsNullOrWhiteSpace(contentType)) continue;
+
+            try
+            {
+                var bytes = File.ReadAllBytes(fullPath);
+                if (bytes.Length == 0) continue;
+
+                // Cap at 5MB per image to keep requests reasonable.
+                if (bytes.Length > 5 * 1024 * 1024) continue;
+
+                result.Add(new UploadedImage(contentType, bytes));
+            }
+            catch
+            {
+                // Ignore bad files
+            }
+        }
+
+        // Keep it small.
+        if (result.Count > 5)
+        {
+            result = result.Take(5).ToList();
+        }
+
+        return result;
+    }
+
+    private string? GetTextModelDeploymentName()
+        => GetStringConfig(_configuration, "AZURE_MODEL_DEPLOYMENT_NAME", "Azure:ModelDeploymentName");
+
+    private async Task<string> GetTextResponseViaRestWithImagesAsync(
+        string prompt,
+        IEnumerable<ChatMessage> history,
+        List<UploadedImage> images,
+        CancellationToken cancellationToken)
+    {
+        var model = GetTextModelDeploymentName();
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            throw new InvalidOperationException("AZURE_MODEL_DEPLOYMENT_NAME (or Azure:ModelDeploymentName) is required for text responses.");
+        }
+
+        var input = new List<object>();
+        foreach (var msg in history.TakeLast(20))
+        {
+            input.Add(new
+            {
+                role = msg.Role,
+                content = new object[]
+                {
+                    new { type = "input_text", text = msg.Content }
+                }
+            });
+        }
+
+        var contentParts = new List<object>
+        {
+            new { type = "input_text", text = prompt }
+        };
+
+        foreach (var img in images)
+        {
+            var b64 = Convert.ToBase64String(img.Bytes);
+            var dataUrl = $"data:{img.ContentType};base64,{b64}";
+            contentParts.Add(new { type = "input_image", image_url = dataUrl });
+        }
+
+        input.Add(new { role = "user", content = contentParts.ToArray() });
+
+        var body = new
+        {
+            model,
+            input
+        };
+
+        var client = CreateAzureOpenAiClient();
+        using var resp = await client.PostAsJsonAsync("openai/v1/responses", body, cancellationToken);
+        var json = await resp.Content.ReadAsStringAsync(cancellationToken);
+        if (!resp.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Azure OpenAI responses call failed ({(int)resp.StatusCode}): {json}");
+        }
+
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        if (TryExtractResponsesOutputText(doc.RootElement, out var text))
+        {
+            return text;
+        }
+
+        return json;
+    }
+
+    private static bool TryExtractResponsesOutputText(System.Text.Json.JsonElement root, out string text)
+    {
+        text = string.Empty;
+
+        if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (root.TryGetProperty("output_text", out var outputTextEl)
+            && outputTextEl.ValueKind == System.Text.Json.JsonValueKind.String)
+        {
+            var s = outputTextEl.GetString();
+            if (!string.IsNullOrWhiteSpace(s))
+            {
+                text = s;
+                return true;
+            }
+        }
+
+        if (!root.TryGetProperty("output", out var outputEl)
+            || outputEl.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        var sb = new System.Text.StringBuilder();
+        foreach (var item in outputEl.EnumerateArray())
+        {
+            if (item.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+            if (!item.TryGetProperty("content", out var contentEl)
+                || contentEl.ValueKind != System.Text.Json.JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var part in contentEl.EnumerateArray())
+            {
+                if (part.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                var type = part.TryGetProperty("type", out var t) ? t.GetString() : null;
+                if (!string.Equals(type, "output_text", StringComparison.OrdinalIgnoreCase)) continue;
+                var partText = part.TryGetProperty("text", out var pt) ? pt.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(partText))
+                {
+                    sb.Append(partText);
+                }
+            }
+        }
+
+        if (sb.Length == 0) return false;
+        text = sb.ToString();
+        return true;
     }
 
     private string SaveGeneratedImage(byte[] pngBytes)
