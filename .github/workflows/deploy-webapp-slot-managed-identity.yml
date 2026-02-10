@@ -21,6 +21,7 @@ jobs:
       PROJECT_PATH: WebApp/WebApp.csproj
       PUBLISH_DIR: publish
       DOTNET_VERSION: 10.0.x
+      RUNTIME: win-x64
 
     steps:
       - name: Checkout
@@ -35,7 +36,7 @@ jobs:
         run: dotnet restore ${{ env.PROJECT_PATH }}
 
       - name: Publish
-        run: dotnet publish ${{ env.PROJECT_PATH }} -c Release -o ${{ env.PUBLISH_DIR }}
+        run: dotnet publish ${{ env.PROJECT_PATH }} -c Release -r ${{ env.RUNTIME }} --self-contained true -o ${{ env.PUBLISH_DIR }}
 
       - name: Create deployment package
         run: |

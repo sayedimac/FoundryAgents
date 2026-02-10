@@ -36,10 +36,10 @@ public class GitHubAuthController : Controller
     [HttpGet("login")]
     public IActionResult Login([FromQuery] string? returnUrl)
     {
-        var clientId = _configuration["GitHub:AppClientId"];
+        var clientId = _configuration["GITHUB_APP_CLIENT_ID"] ?? _configuration["GitHub:AppClientId"];
         if (string.IsNullOrEmpty(clientId))
         {
-            return BadRequest("GitHub App is not configured. Set GitHub:AppClientId in configuration.");
+            return BadRequest("GitHub App is not configured. Set GITHUB_APP_CLIENT_ID (or GitHub:AppClientId) in configuration.");
         }
 
         // Generate and store anti-forgery state
@@ -73,7 +73,8 @@ public class GitHubAuthController : Controller
         HttpContext.Session.Remove("github_oauth_state");
 
         var clientId = _configuration["GitHub:AppClientId"];
-        var clientSecret = _configuration["GitHub:AppClientSecret"];
+        var clientSecret = _configuration["GITHUB_APP_CLIENT_SECRET"] ?? _configuration["GitHub:AppClientSecret"];
+        clientId ??= _configuration["GITHUB_APP_CLIENT_ID"];
 
         if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
         {

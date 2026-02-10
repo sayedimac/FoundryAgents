@@ -38,7 +38,7 @@ public class AgentService : IAgentService, IAsyncDisposable
         _environment = environment;
         _httpClientFactory = httpClientFactory;
 
-        var endpoint = configuration["Azure:ProjectEndpoint"];
+        var endpoint = GetStringConfig(configuration, "AZURE_PROJECT_ENDPOINT", "Azure:ProjectEndpoint");
         if (string.IsNullOrEmpty(endpoint))
         {
             _logger.LogWarning("Azure:ProjectEndpoint not configured. Agent features will be disabled.");
@@ -68,12 +68,12 @@ public class AgentService : IAgentService, IAsyncDisposable
     private string? GetImageGenerationDeploymentName()
     {
         // Prefer the short name requested for this app; allow the longer key for compatibility.
-        return _configuration["Azure:ImageModelDeploymentName"]
+        return GetStringConfig(_configuration, "AZURE_IMAGE_MODEL_DEPLOYMENT_NAME", "Azure:ImageModelDeploymentName")
             ?? _configuration["Azure:ImageGenerationModelDeploymentName"];
     }
 
     private string? GetVideoGenerationDeploymentName()
-        => _configuration["Azure:VideoModelDeploymentName"]
+        => GetStringConfig(_configuration, "AZURE_VIDEO_MODEL_DEPLOYMENT_NAME", "Azure:VideoModelDeploymentName")
             ?? _configuration["Azure:VideoGenerationModelDeploymentName"];
 
     private bool IsImageGenerationConfigured()
@@ -83,7 +83,7 @@ public class AgentService : IAgentService, IAsyncDisposable
         => !string.IsNullOrWhiteSpace(GetVideoGenerationDeploymentName());
 
     private bool IsAzureOpenAiConfigured()
-        => !string.IsNullOrWhiteSpace(_configuration["AzureOpenAI:Endpoint"])
+        => !string.IsNullOrWhiteSpace(GetStringConfig(_configuration, "AZURE_OPENAI_ENDPOINT", "AzureOpenAI:Endpoint"))
            && !string.IsNullOrWhiteSpace(GetAzureOpenAiApiKey());
 
     private string? GetAzureOpenAiApiKey()
@@ -95,10 +95,10 @@ public class AgentService : IAgentService, IAsyncDisposable
 
     private HttpClient CreateAzureOpenAiClient()
     {
-        var endpoint = _configuration["AzureOpenAI:Endpoint"];
+        var endpoint = GetStringConfig(_configuration, "AZURE_OPENAI_ENDPOINT", "AzureOpenAI:Endpoint");
         if (string.IsNullOrWhiteSpace(endpoint))
         {
-            throw new InvalidOperationException("AzureOpenAI:Endpoint is required for REST-based image/video generation.");
+            throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT (or AzureOpenAI:Endpoint) is required for REST-based image/video generation.");
         }
 
         var apiKey = GetAzureOpenAiApiKey();
@@ -232,7 +232,7 @@ public class AgentService : IAgentService, IAsyncDisposable
 
             if (!IsAzureOpenAiConfigured())
             {
-                yield return new TextDeltaUpdate("Image generation requires Azure OpenAI REST config. Set AzureOpenAI:Endpoint and set AZURE_API_KEY environment variable.");
+                yield return new TextDeltaUpdate("Image generation requires Azure OpenAI REST config. Set AZURE_OPENAI_ENDPOINT (or AzureOpenAI:Endpoint) and set AZURE_API_KEY.");
                 yield break;
             }
 
@@ -279,7 +279,7 @@ public class AgentService : IAgentService, IAsyncDisposable
 
             if (!IsAzureOpenAiConfigured())
             {
-                yield return new TextDeltaUpdate("Video generation requires Azure OpenAI REST config. Set AzureOpenAI:Endpoint and set AZURE_API_KEY environment variable.");
+                yield return new TextDeltaUpdate("Video generation requires Azure OpenAI REST config. Set AZURE_OPENAI_ENDPOINT (or AzureOpenAI:Endpoint) and set AZURE_API_KEY.");
                 yield break;
             }
 
@@ -334,9 +334,9 @@ public class AgentService : IAgentService, IAsyncDisposable
         // Keep "GitHub" as a compatibility alias (OAuth redirect/querystring) that requires auth.
         if (agentName is "Code" or "GitHub")
         {
-            var deployment = _configuration["Azure:ModelDeploymentName"]
-                ?? throw new InvalidOperationException("Azure:ModelDeploymentName is required");
-            var mcpUrl = _configuration["Azure:GitHubMcpServerUrl"];
+            var deployment = GetStringConfig(_configuration, "AZURE_MODEL_DEPLOYMENT_NAME", "Azure:ModelDeploymentName")
+                ?? throw new InvalidOperationException("AZURE_MODEL_DEPLOYMENT_NAME (or Azure:ModelDeploymentName) is required");
+            var mcpUrl = GetStringConfig(_configuration, "GITHUB_MCP_SERVER_URL", "Azure:GitHubMcpServerUrl");
 
             var requiresAuth = agentName == "GitHub";
             if (requiresAuth && string.IsNullOrEmpty(githubToken))
@@ -445,10 +445,10 @@ public class AgentService : IAgentService, IAsyncDisposable
 
     private ImageClient CreateAzureOpenAiImageClient(string deploymentName)
     {
-        var endpoint = _configuration["AzureOpenAI:Endpoint"];
+        var endpoint = GetStringConfig(_configuration, "AZURE_OPENAI_ENDPOINT", "AzureOpenAI:Endpoint");
         if (string.IsNullOrWhiteSpace(endpoint))
         {
-            throw new InvalidOperationException("AzureOpenAI:Endpoint is required for image generation.");
+            throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT (or AzureOpenAI:Endpoint) is required for image generation.");
         }
 
         var apiKey = GetAzureOpenAiApiKey();
@@ -494,7 +494,7 @@ public class AgentService : IAgentService, IAsyncDisposable
         var client = CreateAzureOpenAiImageClient(deploymentName);
 
         ImageGenerationOptions options = new();
-        var size = TryMapGeneratedImageSize(_configuration["AzureOpenAI:Images:Size"]);
+        var size = TryMapGeneratedImageSize(GetStringConfig(_configuration, "AZURE_OPENAI_IMAGE_SIZE", "AzureOpenAI:Images:Size"));
         if (size is not null)
         {
             options.Size = size.Value;
@@ -514,13 +514,13 @@ public class AgentService : IAgentService, IAsyncDisposable
         // Matches the user's Azure OpenAI REST sample:
         // POST https://{resource}.openai.azure.com/openai/v1/videos
         // { prompt, size: "720x1280", seconds: 4, model: "sora-2" }
-        var height = _configuration.GetValue<int?>("AzureOpenAI:Video:Height") ?? 1080;
-        var width = _configuration.GetValue<int?>("AzureOpenAI:Video:Width") ?? 1080;
-        var size = _configuration["AzureOpenAI:Video:Size"] ?? $"{height}x{width}";
-        var seconds = _configuration.GetValue<int?>("AzureOpenAI:Video:Seconds") ?? 4;
+        var height = GetIntConfig(_configuration, "AZURE_OPENAI_VIDEO_HEIGHT", "AzureOpenAI:Video:Height") ?? 1080;
+        var width = GetIntConfig(_configuration, "AZURE_OPENAI_VIDEO_WIDTH", "AzureOpenAI:Video:Width") ?? 1080;
+        var size = GetStringConfig(_configuration, "AZURE_OPENAI_VIDEO_SIZE", "AzureOpenAI:Video:Size") ?? $"{height}x{width}";
+        var seconds = GetIntConfig(_configuration, "AZURE_OPENAI_VIDEO_SECONDS", "AzureOpenAI:Video:Seconds") ?? 4;
         if (seconds is not (4 or 8 or 12))
         {
-            throw new InvalidOperationException("AzureOpenAI:Video:Seconds must be one of 4, 8, or 12 for the /openai/v1/videos endpoint.");
+            throw new InvalidOperationException("AZURE_OPENAI_VIDEO_SECONDS (or AzureOpenAI:Video:Seconds) must be one of 4, 8, or 12 for the /openai/v1/videos endpoint.");
         }
 
         var body = new
@@ -568,8 +568,8 @@ public class AgentService : IAgentService, IAsyncDisposable
             return new VideoJobResult(StatusJson: submitJson, VideoBytes: null, FileExtension: null, VideoUrl: null);
         }
 
-        var pollIntervalMs = _configuration.GetValue<int?>("AzureOpenAI:Video:PollIntervalMs") ?? 1500;
-        var maxAttempts = _configuration.GetValue<int?>("AzureOpenAI:Video:MaxPollAttempts") ?? 60;
+        var pollIntervalMs = GetIntConfig(_configuration, "AZURE_OPENAI_VIDEO_POLL_INTERVAL_MS", "AzureOpenAI:Video:PollIntervalMs") ?? 1500;
+        var maxAttempts = GetIntConfig(_configuration, "AZURE_OPENAI_VIDEO_MAX_POLL_ATTEMPTS", "AzureOpenAI:Video:MaxPollAttempts") ?? 60;
 
         string? lastJson = null;
         for (var attempt = 0; attempt < maxAttempts; attempt++)
@@ -650,6 +650,21 @@ public class AgentService : IAgentService, IAsyncDisposable
         }
 
         return new VideoJobResult(StatusJson: lastJson ?? submitJson, VideoBytes: null, FileExtension: null, VideoUrl: null);
+    }
+
+    private static string? GetStringConfig(IConfiguration configuration, string flatKey, string legacyKey)
+        => configuration[flatKey] ?? configuration[legacyKey];
+
+    private static int? GetIntConfig(IConfiguration configuration, string flatKey, string legacyKey)
+    {
+        var flat = configuration[flatKey];
+        if (!string.IsNullOrWhiteSpace(flat)
+            && int.TryParse(flat, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var flatValue))
+        {
+            return flatValue;
+        }
+
+        return configuration.GetValue<int?>(legacyKey);
     }
 
     private readonly record struct FetchedVideo(string? Url, byte[]? Bytes, string FileExtension);
