@@ -1,7 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
-using WebApp.Services;
 
 namespace WebApp.Controllers;
 
@@ -9,18 +8,15 @@ namespace WebApp.Controllers;
 public class GitHubAuthController : Controller
 {
     private readonly IConfiguration _configuration;
-    private readonly IGitHubTokenService _tokenService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<GitHubAuthController> _logger;
 
     public GitHubAuthController(
         IConfiguration configuration,
-        IGitHubTokenService tokenService,
         IHttpClientFactory httpClientFactory,
         ILogger<GitHubAuthController> logger)
     {
         _configuration = configuration;
-        _tokenService = tokenService;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
@@ -28,9 +24,11 @@ public class GitHubAuthController : Controller
     [HttpGet("status")]
     public IActionResult Status()
     {
-        var sessionId = GetOrCreateSessionId();
-        var isAuthenticated = _tokenService.IsAuthenticated(sessionId);
-        var username = isAuthenticated ? _tokenService.GetUsername(sessionId) : null;
+        GetOrCreateSessionId();
+
+        var accessToken = HttpContext.Session.GetString("github_access_token");
+        var username = HttpContext.Session.GetString("github_username");
+        var isAuthenticated = !string.IsNullOrEmpty(accessToken);
 
         return Ok(new { authenticated = isAuthenticated, username });
     }
@@ -133,17 +131,22 @@ public class GitHubAuthController : Controller
                 _logger.LogWarning(ex, "Failed to fetch GitHub user profile");
             }
 
-            // Store the access token keyed to this user's session
-            var sessionId = GetOrCreateSessionId();
-            _tokenService.StoreToken(sessionId, accessToken, username);
+            // Store token in the user's session (demo).
+            // For production, prefer a secure server-side token store + encryption-at-rest.
+            GetOrCreateSessionId();
+            HttpContext.Session.SetString("github_access_token", accessToken);
+            if (!string.IsNullOrEmpty(username))
+            {
+                HttpContext.Session.SetString("github_username", username);
+            }
 
             _logger.LogInformation("GitHub user authenticated: {Username}", username);
 
-            // Redirect back to the chat page with the GitHub agent pre-selected
+            // Redirect back to the chat page with the Code agent pre-selected
             var returnUrl = HttpContext.Session.GetString("github_return_url") ?? "/";
             HttpContext.Session.Remove("github_return_url");
 
-            return Redirect($"{returnUrl}?agent=GitHub&github_auth=success" +
+            return Redirect($"{returnUrl}?agent=Code&github_auth=success" +
                 $"&username={Uri.EscapeDataString(username ?? "")}");
         }
         catch (Exception ex)
@@ -156,8 +159,9 @@ public class GitHubAuthController : Controller
     [HttpPost("logout")]
     public IActionResult Logout()
     {
-        var sessionId = GetOrCreateSessionId();
-        _tokenService.RemoveToken(sessionId);
+        GetOrCreateSessionId();
+        HttpContext.Session.Remove("github_access_token");
+        HttpContext.Session.Remove("github_username");
         return Ok(new { success = true });
     }
 

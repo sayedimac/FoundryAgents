@@ -207,6 +207,57 @@ html, body {
     display: block;
 }
 
+.mcp-status {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.mcp-status-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.mcp-status-value {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    min-height: 18px;
+}
+
+.mcp-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.mcp-status[data-state="connected"] .mcp-dot {
+    background: var(--success-color);
+}
+
+.mcp-status[data-state="disconnected"] .mcp-dot {
+    background: var(--error-color);
+}
+
+.mcp-status[data-state="connecting"] .mcp-dot {
+    background: var(--warning-color);
+}
+
+.mcp-status[data-state="busy"] .mcp-dot {
+    background: var(--accent-color);
+}
+
 /* Main Chat Area */
 .chat-main {
     flex: 1;

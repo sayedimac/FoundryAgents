@@ -13,11 +13,14 @@ class ChatApp {
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
 
+        this.githubUsername = null;
+        this.gitHubMcpBusyCount = 0;
+
         this.init();
     }
 
     async init() {
-        this.loadTheme();
+        this.applyDefaultTheme();
         await this.setupSignalR();
         this.setupEventListeners();
         this.setupMarkdown();
@@ -27,10 +30,10 @@ class ChatApp {
     handleOAuthReturn() {
         const params = new URLSearchParams(window.location.search);
         if (params.get('github_auth') === 'success') {
-            const agent = params.get('agent') || 'GitHub';
+            const agent = params.get('agent') || 'Code';
             const username = params.get('username');
 
-            // Pre-select the GitHub agent in the dropdown
+            // Pre-select the Code agent (which hosts GitHub MCP tools) in the dropdown
             const select = document.getElementById('agentSelect');
             if (select) {
                 select.value = agent;
@@ -38,6 +41,8 @@ class ChatApp {
             this.selectAgent(agent);
 
             if (username) {
+                this.githubUsername = username;
+                this.setGitHubMcpStatus('connected', { username });
                 this.addSystemMessage(`Connected to GitHub as ${username}`, 'info');
             }
 
@@ -46,9 +51,11 @@ class ChatApp {
         }
     }
 
-    loadTheme() {
-        const savedTheme = localStorage.getItem('chat-theme') || 'light';
-        document.getElementById('chatContainer').dataset.theme = savedTheme;
+    applyDefaultTheme() {
+        const container = document.getElementById('chatContainer');
+        if (container) {
+            container.dataset.theme = 'dark';
+        }
     }
 
     async setupSignalR() {
@@ -87,11 +94,25 @@ class ChatApp {
 
         this.connection.on('ReceiveToolCall', (messageId, toolName, args) => {
             this.showToolNotification(toolName, 'Running...');
+
+            if (this.currentAgent === 'Code') {
+                this.gitHubMcpBusyCount++;
+                this.setGitHubMcpStatus('busy');
+            }
         });
 
         this.connection.on('ReceiveToolResult', (messageId, toolName, result) => {
             this.showToolNotification(toolName, 'Complete');
             setTimeout(() => this.hideToolNotification(), 2000);
+
+            if (this.currentAgent === 'Code') {
+                this.gitHubMcpBusyCount = Math.max(0, this.gitHubMcpBusyCount - 1);
+                if (this.gitHubMcpBusyCount === 0) {
+                    this.setGitHubMcpStatus(this.githubUsername ? 'connected' : 'disconnected', {
+                        username: this.githubUsername
+                    });
+                }
+            }
         });
 
         this.connection.on('ReceiveError', (messageId, error) => {
@@ -135,11 +156,6 @@ class ChatApp {
         // Agent selection
         document.getElementById('agentSelect').addEventListener('change', (e) => {
             this.selectAgent(e.target.value);
-        });
-
-        // Theme toggle
-        document.getElementById('themeToggle').addEventListener('click', () => {
-            this.toggleTheme();
         });
 
         // New chat button
@@ -350,10 +366,19 @@ class ChatApp {
     async selectAgent(agentName) {
         this.currentAgent = agentName;
 
-        // When selecting the GitHub agent, verify the user has authenticated
-        if (agentName === 'GitHub') {
-            const authed = await this.checkGitHubAuth();
-            if (!authed) return; // auth prompt shown; wait for user action
+        this.updateGitHubMcpVisibility();
+
+        if (agentName === 'Code') {
+            // Default to disconnected until we can confirm auth.
+            if (!this.githubUsername && this.gitHubMcpBusyCount === 0) {
+                this.setGitHubMcpStatus('disconnected');
+            }
+        }
+
+        // When selecting the Code agent, check whether GitHub auth is available.
+        // Don't block selection; GitHub MCP tools will simply be unavailable until connected.
+        if (agentName === 'Code') {
+            await this.checkGitHubAuth();
         }
 
         try {
@@ -364,20 +389,65 @@ class ChatApp {
         this.updateAgentDisplay({ name: agentName });
     }
 
+    updateGitHubMcpVisibility() {
+        const statusEl = document.getElementById('githubMcpStatus');
+        if (!statusEl) return;
+        statusEl.classList.toggle('hidden', this.currentAgent !== 'Code');
+    }
+
+    setGitHubMcpStatus(state, options = {}) {
+        const statusEl = document.getElementById('githubMcpStatus');
+        const textEl = document.getElementById('githubMcpStatusText');
+        if (!statusEl || !textEl) return;
+
+        statusEl.dataset.state = state;
+
+        const username = options.username ?? this.githubUsername;
+
+        switch (state) {
+            case 'connected':
+                textEl.textContent = username ? `Connected as ${username}` : 'Connected';
+                break;
+            case 'connecting':
+                textEl.textContent = 'Connecting...';
+                break;
+            case 'busy':
+                textEl.textContent = 'Busy...';
+                break;
+            case 'disconnected':
+            default:
+                textEl.textContent = 'Disconnected';
+                break;
+        }
+    }
+
     async checkGitHubAuth() {
         try {
+            this.setGitHubMcpStatus('connecting');
             const response = await fetch('/auth/github/status');
             const data = await response.json();
 
             if (!data.authenticated) {
+                this.githubUsername = null;
+                if (this.gitHubMcpBusyCount === 0) {
+                    this.setGitHubMcpStatus('disconnected');
+                }
                 this.showGitHubAuthPrompt();
                 return false;
             }
 
             this.githubUsername = data.username;
+            if (this.gitHubMcpBusyCount === 0) {
+                this.setGitHubMcpStatus('connected', { username: data.username });
+            }
             return true;
         } catch (error) {
             console.error('GitHub auth check failed:', error);
+            if (this.gitHubMcpBusyCount === 0 && this.currentAgent === 'Code') {
+                this.setGitHubMcpStatus(this.githubUsername ? 'connected' : 'disconnected', {
+                    username: this.githubUsername
+                });
+            }
             // Let the user proceed; MCP calls may still work without auth
             return true;
         }
@@ -394,7 +464,7 @@ class ChatApp {
             <div class="message-content" style="margin-left: 44px;">
                 <div class="message-body">
                     <p><strong>GitHub Authentication Required</strong></p>
-                    <p>The GitHub agent needs access to your GitHub account to search repositories, issues, and pull requests.</p>
+                    <p>The Code agent can use GitHub MCP tools, which requires access to your GitHub account to search repositories, issues, and pull requests.</p>
                     <a href="/auth/github/login?returnUrl=${encodeURIComponent('/')}" class="btn-github-auth">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 8px;">
                             <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
@@ -499,13 +569,7 @@ class ChatApp {
         }
     }
 
-    toggleTheme() {
-        const container = document.getElementById('chatContainer');
-        const currentTheme = container.dataset.theme;
-        const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-        container.dataset.theme = newTheme;
-        localStorage.setItem('chat-theme', newTheme);
-    }
+    // Theme is intentionally fixed to dark for this demo.
 
     async handleFileSelect(files) {
         if (!files || files.length === 0) return;
@@ -529,7 +593,14 @@ class ChatApp {
 
                     const item = document.createElement('div');
                     item.className = 'file-preview-item';
+
+                    const isImage = (attachment.contentType || '').toLowerCase().startsWith('image/');
+                    const previewHtml = isImage && attachment.storagePath
+                        ? `<img src="${attachment.storagePath}" alt="${this.escapeHtml(attachment.fileName || 'image')}" style="width: 28px; height: 28px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border-color);" />`
+                        : '';
+
                     item.innerHTML = `
+                        ${previewHtml}
                         <span>${attachment.fileName}</span>
                         <button type="button" onclick="chatApp.removeFile('${attachment.id}')">&times;</button>
                     `;

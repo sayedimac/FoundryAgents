@@ -6,6 +6,9 @@
 # dotenv files
 .env
 
+# Local developer overrides (do not commit secrets)
+WebApp/appsettings.Local.json
+
 # User-specific files
 *.rsuser
 *.suo

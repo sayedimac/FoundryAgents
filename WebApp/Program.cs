@@ -3,6 +3,16 @@ using WebApp.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// When running from the repo root (e.g. `dotnet run --project WebApp/WebApp.csproj`),
+// the content root can be the repo root. Load WebApp-scoped appsettings in that case.
+builder.Configuration
+    .AddJsonFile(Path.Combine("WebApp", "appsettings.json"), optional: true, reloadOnChange: true)
+    .AddJsonFile(Path.Combine("WebApp", $"appsettings.{builder.Environment.EnvironmentName}.json"), optional: true, reloadOnChange: true);
+
+// Optional local overrides (intentionally git-ignored) for developer-specific secrets.
+builder.Configuration
+    .AddJsonFile(Path.Combine("WebApp", "appsettings.Local.json"), optional: true, reloadOnChange: true);
+
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 builder.Services.AddSignalR();
@@ -22,7 +32,6 @@ builder.Services.AddHttpClient();
 // Register agent and conversation services
 builder.Services.AddSingleton<IAgentService, AgentService>();
 builder.Services.AddSingleton<IConversationService, ConversationService>();
-builder.Services.AddSingleton<IGitHubTokenService, GitHubTokenService>();
 
 var app = builder.Build();
 

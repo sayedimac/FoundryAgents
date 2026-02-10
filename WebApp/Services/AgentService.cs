@@ -1,9 +1,13 @@
 #pragma warning disable OPENAI001
 
 using System.Runtime.CompilerServices;
+using System.ClientModel.Primitives;
+using System.ClientModel;
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
+using OpenAI;
+using OpenAI.Images;
 using OpenAI.Responses;
 using WebApp.Models;
 
@@ -18,13 +22,21 @@ public class AgentService : IAgentService, IAsyncDisposable
     private readonly Dictionary<string, ChatAgentInfo> _agentInfos = new();
     private readonly IConfiguration _configuration;
     private readonly ILogger<AgentService> _logger;
+    private readonly IWebHostEnvironment _environment;
+    private readonly IHttpClientFactory _httpClientFactory;
     private bool _initialized;
     private readonly SemaphoreSlim _initLock = new(1, 1);
 
-    public AgentService(IConfiguration configuration, ILogger<AgentService> logger)
+    public AgentService(
+        IConfiguration configuration,
+        ILogger<AgentService> logger,
+        IWebHostEnvironment environment,
+        IHttpClientFactory httpClientFactory)
     {
         _configuration = configuration;
         _logger = logger;
+        _environment = environment;
+        _httpClientFactory = httpClientFactory;
 
         var endpoint = configuration["Azure:ProjectEndpoint"];
         if (string.IsNullOrEmpty(endpoint))
@@ -38,7 +50,67 @@ public class AgentService : IAgentService, IAsyncDisposable
             ? new DefaultAzureCredential()
             : new ManagedIdentityCredential();
 
-        _projectClient = new AIProjectClient(new Uri(endpoint), credential);
+        var imageDeployment = GetImageGenerationDeploymentName();
+        if (!string.IsNullOrWhiteSpace(imageDeployment))
+        {
+            // Per Foundry docs, image generation requires the header:
+            // x-ms-oai-image-generation-deployment: <image model deployment>
+            AIProjectClientOptions projectOptions = new();
+            projectOptions.AddPolicy(new ImageGenerationHeaderPolicy(imageDeployment), PipelinePosition.PerCall);
+            _projectClient = new AIProjectClient(new Uri(endpoint), credential, projectOptions);
+        }
+        else
+        {
+            _projectClient = new AIProjectClient(new Uri(endpoint), credential);
+        }
+    }
+
+    private string? GetImageGenerationDeploymentName()
+    {
+        // Prefer the short name requested for this app; allow the longer key for compatibility.
+        return _configuration["Azure:ImageModelDeploymentName"]
+            ?? _configuration["Azure:ImageGenerationModelDeploymentName"];
+    }
+
+    private string? GetVideoGenerationDeploymentName()
+        => _configuration["Azure:VideoModelDeploymentName"]
+            ?? _configuration["Azure:VideoGenerationModelDeploymentName"];
+
+    private bool IsImageGenerationConfigured()
+        => !string.IsNullOrWhiteSpace(GetImageGenerationDeploymentName());
+
+    private bool IsVideoGenerationConfigured()
+        => !string.IsNullOrWhiteSpace(GetVideoGenerationDeploymentName());
+
+    private bool IsAzureOpenAiConfigured()
+        => !string.IsNullOrWhiteSpace(_configuration["AzureOpenAI:Endpoint"])
+           && !string.IsNullOrWhiteSpace(GetAzureOpenAiApiKey());
+
+    private string? GetAzureOpenAiApiKey()
+    {
+        // Prefer env var to keep secrets out of appsettings.
+        return Environment.GetEnvironmentVariable("AZURE_API_KEY")
+            ?? _configuration["AzureOpenAI:ApiKey"];
+    }
+
+    private HttpClient CreateAzureOpenAiClient()
+    {
+        var endpoint = _configuration["AzureOpenAI:Endpoint"];
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            throw new InvalidOperationException("AzureOpenAI:Endpoint is required for REST-based image/video generation.");
+        }
+
+        var apiKey = GetAzureOpenAiApiKey();
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new InvalidOperationException("AZURE_API_KEY environment variable (or AzureOpenAI:ApiKey) is required for REST-based image/video generation.");
+        }
+
+        var client = _httpClientFactory.CreateClient();
+        client.BaseAddress = new Uri(endpoint.TrimEnd('/') + "/");
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+        return client;
     }
 
     public async Task InitializeAsync()
@@ -84,66 +156,51 @@ public class AgentService : IAgentService, IAsyncDisposable
             };
 
             // Create Code Assistant
-            _agents["CodeAssistant"] = await CreateAgentAsync(deployment, "ChatCodeAssistant", """
-                You are a helpful code assistant. You help with programming questions,
-                code review, debugging, and explaining code. Always use proper Markdown
-                code blocks with language identifiers for syntax highlighting.
-                Be concise but thorough in your explanations.
+            _agents["Code"] = await CreateAgentAsync(deployment, "ChatCode", """
+                You are a helpful code assistant.
+                You help with programming questions, code review, debugging, and explaining code.
+                Format responses in Markdown. Use fenced code blocks with language identifiers.
+                If GitHub MCP tools are available, you may use them to search code, issues, and PRs.
+                Be concise but thorough.
                 """);
-            _agentInfos["CodeAssistant"] = new ChatAgentInfo
+            _agentInfos["Code"] = new ChatAgentInfo
             {
-                Name = "CodeAssistant",
-                Description = "Helps with coding questions",
+                Name = "Code",
+                Description = "Coding + GitHub tools (MCP)",
                 Avatar = "C",
-                Capabilities = ["Code review", "Debugging", "Explanations", "Best practices"],
-                HasTools = false
-            };
-
-            // Register GitHub agent info (uses model-bound responses client
-            // with the user's OAuth token passed at request time).
-            _agentInfos["GitHub"] = new ChatAgentInfo
-            {
-                Name = "GitHub",
-                Description = "GitHub assistant with MCP tools",
-                Avatar = "G",
-                Capabilities = ["Repository search", "Issue tracking", "Code search", "PR management"],
+                Capabilities = ["Code review", "Debugging", "Explanations", "Best practices", "GitHub MCP tools"],
                 HasTools = true
             };
 
-            // Ensure the GitHub MCP server label is enabled in the Foundry project.
-            // Some MCP flows validate approvals against project-enabled servers.
-            var gitHubMcpUrl = _configuration["Azure:GitHubMcpServerUrl"];
-            if (!string.IsNullOrEmpty(gitHubMcpUrl))
+            // Create Image agent (only when configured)
+            var imageDeployment = GetImageGenerationDeploymentName();
+            if (!string.IsNullOrWhiteSpace(imageDeployment))
             {
-                try
+                _agentInfos["Image"] = new ChatAgentInfo
                 {
-                    var gitHubMcpTool = ResponseTool.CreateMcpTool(
-                        serverLabel: "github",
-                        serverUri: new Uri(gitHubMcpUrl),
-                        toolCallApprovalPolicy: new McpToolCallApprovalPolicy(
-                            GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
-
-                    var ghDefinition = new PromptAgentDefinition(model: deployment)
-                    {
-                        Instructions = """
-                            You are a GitHub MCP tool registration agent.
-                            You do not chat with users; your purpose is to register the GitHub MCP server tool.
-                            """,
-                        Tools = { gitHubMcpTool }
-                    };
-
-                    var ghResult = await _projectClient.Agents.CreateAgentVersionAsync(
-                        agentName: "ChatGitHubMcpRegistry",
-                        options: new AgentVersionCreationOptions(ghDefinition));
-                    _agents["GitHubMcpRegistry"] = ghResult.Value;
-                    _logger.LogInformation("Created GitHub MCP registry agent: {Name} v{Version}",
-                        ghResult.Value.Name, ghResult.Value.Version);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to create GitHub MCP registry agent; MCP approvals may fail if the server is not enabled in the project.");
-                }
+                    Name = "Image",
+                    Description = "Generates images",
+                    Avatar = "I",
+                    Capabilities = ["Image generation", "gpt-image-1"],
+                    HasTools = true
+                };
             }
+
+            if (IsVideoGenerationConfigured())
+            {
+                _agentInfos["Video"] = new ChatAgentInfo
+                {
+                    Name = "Video",
+                    Description = "Generates videos",
+                    Avatar = "V",
+                    Capabilities = ["Video generation (REST)", "Sora"],
+                    HasTools = true
+                };
+            }
+
+            // Best practice: configure MCP tools in the Foundry project/agent tool catalog,
+            // then attach the MCP tool per request (as this app does for the GitHub agent).
+            // Avoid creating agent versions at runtime just to "register" an MCP server.
 
             _initialized = true;
             _logger.LogInformation("Initialized {Count} agents", _agents.Count);
@@ -163,49 +220,154 @@ public class AgentService : IAgentService, IAsyncDisposable
     {
         await InitializeAsync();
 
+        // REST-based media agents do not require an Azure AI Foundry project client.
+        if (agentName == "Image")
+        {
+            var imageDeployment = GetImageGenerationDeploymentName();
+            if (string.IsNullOrWhiteSpace(imageDeployment))
+            {
+                yield return new TextDeltaUpdate("Image generation isn't configured. Set Azure:ImageModelDeploymentName to your image model name/deployment (e.g., 'dall-e-3').");
+                yield break;
+            }
+
+            if (!IsAzureOpenAiConfigured())
+            {
+                yield return new TextDeltaUpdate("Image generation requires Azure OpenAI REST config. Set AzureOpenAI:Endpoint and set AZURE_API_KEY environment variable.");
+                yield break;
+            }
+
+            yield return new TextDeltaUpdate("Generating image...\n");
+
+            byte[]? pngBytes = null;
+            string? error = null;
+
+            try
+            {
+                pngBytes = await GenerateImageViaSdkAsync(prompt, imageDeployment, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Image generation call failed");
+                error = ex.Message;
+            }
+
+            if (!string.IsNullOrWhiteSpace(error))
+            {
+                yield return new TextDeltaUpdate($"Image generation failed: {error}");
+                yield break;
+            }
+
+            if (pngBytes is not { Length: > 0 })
+            {
+                yield return new TextDeltaUpdate("Image generation completed but no image payload was returned.");
+                yield break;
+            }
+
+            var publicPath = SaveGeneratedImage(pngBytes);
+            yield return new TextDeltaUpdate($"![Generated image]({publicPath})");
+            yield break;
+        }
+
+        if (agentName == "Video")
+        {
+            var videoDeployment = GetVideoGenerationDeploymentName();
+            if (string.IsNullOrWhiteSpace(videoDeployment))
+            {
+                yield return new TextDeltaUpdate("Video generation isn't configured. Set Azure:VideoModelDeploymentName to your video model deployment name (e.g., 'sora').");
+                yield break;
+            }
+
+            if (!IsAzureOpenAiConfigured())
+            {
+                yield return new TextDeltaUpdate("Video generation requires Azure OpenAI REST config. Set AzureOpenAI:Endpoint and set AZURE_API_KEY environment variable.");
+                yield break;
+            }
+
+            yield return new TextDeltaUpdate("Starting video generation job...\n");
+
+            VideoJobResult? result = null;
+            string? statusJson = null;
+            string? error = null;
+
+            try
+            {
+                result = await GenerateVideoViaRestAsync(prompt, videoDeployment, cancellationToken);
+                statusJson = result.StatusJson;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Video generation REST call failed");
+                error = ex.Message;
+            }
+
+            if (!string.IsNullOrWhiteSpace(error))
+            {
+                yield return new TextDeltaUpdate($"Video generation failed: {error}");
+                yield break;
+            }
+
+            if (result?.VideoBytes is { Length: > 0 })
+            {
+                var publicPath = SaveGeneratedVideo(result.VideoBytes, result.FileExtension ?? ".mp4");
+                yield return new TextDeltaUpdate($"<video controls style=\"max-width: 100%;\" src=\"{publicPath}\"></video>\n\n[Download video]({publicPath})");
+                yield break;
+            }
+
+            if (!string.IsNullOrWhiteSpace(result?.VideoUrl))
+            {
+                yield return new TextDeltaUpdate($"Video is ready: {result!.VideoUrl}");
+                yield break;
+            }
+
+            yield return new TextDeltaUpdate("Video generation completed but no video payload/url was detected. Raw status:\n\n```json\n" + (statusJson ?? "(none)") + "\n```");
+            yield break;
+        }
+
+        // From here down, agents require the Foundry project client.
         if (_projectClient == null)
         {
             yield return new TextDeltaUpdate("Agent service is not configured. Please set Azure:ProjectEndpoint in configuration.");
             yield break;
         }
 
-        // GitHub agent uses a model-bound responses client with the user's
-        // GitHub OAuth token passed via MCP tool for authenticated access.
-        if (agentName == "GitHub")
+        // Code agent: optionally attaches GitHub MCP tool per request when the user is authenticated.
+        // Keep "GitHub" as a compatibility alias (OAuth redirect/querystring) that requires auth.
+        if (agentName is "Code" or "GitHub")
         {
             var deployment = _configuration["Azure:ModelDeploymentName"]
                 ?? throw new InvalidOperationException("Azure:ModelDeploymentName is required");
             var mcpUrl = _configuration["Azure:GitHubMcpServerUrl"];
 
-            if (string.IsNullOrEmpty(githubToken))
+            var requiresAuth = agentName == "GitHub";
+            if (requiresAuth && string.IsNullOrEmpty(githubToken))
             {
-                yield return new TextDeltaUpdate("Please sign in with GitHub first to use the GitHub agent.");
+                yield return new TextDeltaUpdate("Please sign in with GitHub first to use GitHub MCP tools.");
                 yield break;
             }
 
-            var responsesClient = _projectClient.OpenAI.GetProjectResponsesClientForModel(deployment);
-
-            var mcpOptions = new CreateResponseOptions
+            // Only attach MCP tools when we have a token + MCP server URL.
+            if (!string.IsNullOrEmpty(githubToken) && !string.IsNullOrEmpty(mcpUrl))
             {
-                Instructions = """
-                    You are a helpful GitHub assistant with access to GitHub via MCP.
-                    You can search repositories, issues, pull requests, and code.
-                    Format responses in Markdown. Include relevant links when helpful.
-                    Be concise but informative.
-                    """
-            };
+                var responsesClient = _projectClient.OpenAI.GetProjectResponsesClientForModel(deployment);
 
-            foreach (var msg in history.TakeLast(20))
-            {
-                mcpOptions.InputItems.Add(msg.Role == "user"
-                    ? ResponseItem.CreateUserMessageItem(msg.Content)
-                    : ResponseItem.CreateAssistantMessageItem(msg.Content));
-            }
-            mcpOptions.InputItems.Add(ResponseItem.CreateUserMessageItem(prompt));
+                var mcpOptions = new CreateResponseOptions
+                {
+                    Instructions = """
+                        You are a helpful software engineering assistant.
+                        Format responses in Markdown and use fenced code blocks with language identifiers.
+                        You have access to GitHub via MCP when needed; prefer using tools for repo/issue/code facts.
+                        Be concise but thorough.
+                        """
+                };
 
-            // Add MCP tool with user's GitHub token for authenticated access
-            if (!string.IsNullOrEmpty(mcpUrl))
-            {
+                foreach (var msg in history.TakeLast(20))
+                {
+                    mcpOptions.InputItems.Add(msg.Role == "user"
+                        ? ResponseItem.CreateUserMessageItem(msg.Content)
+                        : ResponseItem.CreateAssistantMessageItem(msg.Content));
+                }
+                mcpOptions.InputItems.Add(ResponseItem.CreateUserMessageItem(prompt));
+
                 var mcpTool = ResponseTool.CreateMcpTool(
                     serverLabel: "github",
                     serverUri: new Uri(mcpUrl),
@@ -213,13 +375,15 @@ public class AgentService : IAgentService, IAsyncDisposable
                     toolCallApprovalPolicy: new McpToolCallApprovalPolicy(
                         GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
                 mcpOptions.Tools.Add(mcpTool);
+
+                await foreach (var update in HandleMcpStreamingAsync(responsesClient, mcpOptions, cancellationToken))
+                {
+                    yield return update;
+                }
+                yield break;
             }
 
-            await foreach (var update in HandleMcpStreamingAsync(responsesClient, mcpOptions, cancellationToken))
-            {
-                yield return update;
-            }
-            yield break;
+            // No MCP available; proceed with normal agent flow (streaming) below.
         }
 
         if (!_agents.TryGetValue(agentName, out var agent))
@@ -252,6 +416,437 @@ public class AgentService : IAgentService, IAsyncDisposable
         }
     }
 
+    private string SaveGeneratedImage(byte[] pngBytes)
+    {
+        var folder = Path.Combine(_environment.WebRootPath, "generated");
+        Directory.CreateDirectory(folder);
+
+        var fileName = $"{Guid.NewGuid():N}.png";
+        var filePath = Path.Combine(folder, fileName);
+        File.WriteAllBytes(filePath, pngBytes);
+
+        return $"/generated/{fileName}";
+    }
+
+    private string SaveGeneratedVideo(byte[] bytes, string fileExtension)
+    {
+        var folder = Path.Combine(_environment.WebRootPath, "generated");
+        Directory.CreateDirectory(folder);
+
+        var ext = string.IsNullOrWhiteSpace(fileExtension) ? ".mp4" : fileExtension;
+        if (!ext.StartsWith('.')) ext = "." + ext;
+
+        var fileName = $"{Guid.NewGuid():N}{ext}";
+        var filePath = Path.Combine(folder, fileName);
+        File.WriteAllBytes(filePath, bytes);
+
+        return $"/generated/{fileName}";
+    }
+
+    private ImageClient CreateAzureOpenAiImageClient(string deploymentName)
+    {
+        var endpoint = _configuration["AzureOpenAI:Endpoint"];
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            throw new InvalidOperationException("AzureOpenAI:Endpoint is required for image generation.");
+        }
+
+        var apiKey = GetAzureOpenAiApiKey();
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new InvalidOperationException("AZURE_API_KEY environment variable (or AzureOpenAI:ApiKey) is required for image generation.");
+        }
+
+        // The OpenAI .NET ImageClient expects the Azure OpenAI "openai/v1" endpoint.
+        // Accept either the base resource endpoint (https://{name}.openai.azure.com)
+        // or the full endpoint (https://{name}.openai.azure.com/openai/v1/).
+        var normalizedEndpoint = endpoint.TrimEnd('/');
+        if (!normalizedEndpoint.EndsWith("/openai/v1", StringComparison.OrdinalIgnoreCase))
+        {
+            normalizedEndpoint += "/openai/v1";
+        }
+
+        return new ImageClient(
+            credential: new ApiKeyCredential(apiKey),
+            model: deploymentName,
+            options: new OpenAIClientOptions
+            {
+                Endpoint = new Uri(normalizedEndpoint + "/")
+            }
+        );
+    }
+
+    private static GeneratedImageSize? TryMapGeneratedImageSize(string? size)
+    {
+        if (string.IsNullOrWhiteSpace(size)) return null;
+
+        return size.Trim() switch
+        {
+            "1024x1024" => GeneratedImageSize.W1024xH1024,
+            "1024x1792" => GeneratedImageSize.W1024xH1792,
+            "1792x1024" => GeneratedImageSize.W1792xH1024,
+            _ => null
+        };
+    }
+
+    private async Task<byte[]> GenerateImageViaSdkAsync(string prompt, string deploymentName, CancellationToken cancellationToken)
+    {
+        var client = CreateAzureOpenAiImageClient(deploymentName);
+
+        ImageGenerationOptions options = new();
+        var size = TryMapGeneratedImageSize(_configuration["AzureOpenAI:Images:Size"]);
+        if (size is not null)
+        {
+            options.Size = size.Value;
+        }
+
+        // Matches the user's sample: Generate image and return raw bytes.
+        GeneratedImage image = await client.GenerateImageAsync(prompt, options, cancellationToken);
+        return image.ImageBytes.ToArray();
+    }
+
+    private sealed record VideoJobResult(string? StatusJson, byte[]? VideoBytes, string? FileExtension, string? VideoUrl);
+
+    private async Task<VideoJobResult> GenerateVideoViaRestAsync(string prompt, string model, CancellationToken cancellationToken)
+    {
+        var client = CreateAzureOpenAiClient();
+
+        // Matches the user's Azure OpenAI REST sample:
+        // POST https://{resource}.openai.azure.com/openai/v1/videos
+        // { prompt, size: "720x1280", seconds: 4, model: "sora-2" }
+        var height = _configuration.GetValue<int?>("AzureOpenAI:Video:Height") ?? 1080;
+        var width = _configuration.GetValue<int?>("AzureOpenAI:Video:Width") ?? 1080;
+        var size = _configuration["AzureOpenAI:Video:Size"] ?? $"{height}x{width}";
+        var seconds = _configuration.GetValue<int?>("AzureOpenAI:Video:Seconds") ?? 4;
+        if (seconds is not (4 or 8 or 12))
+        {
+            throw new InvalidOperationException("AzureOpenAI:Video:Seconds must be one of 4, 8, or 12 for the /openai/v1/videos endpoint.");
+        }
+
+        var body = new
+        {
+            prompt,
+            size,
+            seconds = seconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            model
+        };
+
+        using var submit = await client.PostAsJsonAsync("openai/v1/videos", body, cancellationToken);
+        var submitJson = await submit.Content.ReadAsStringAsync(cancellationToken);
+        if (!submit.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Azure OpenAI video job submit failed ({(int)submit.StatusCode}): {submitJson}");
+        }
+
+        using var submitDoc = System.Text.Json.JsonDocument.Parse(submitJson);
+
+        // Some services respond synchronously with a URL or base64 payload.
+        if (TryExtractVideoUrlOrBytes(submitDoc.RootElement, out var immediateUrl, out var immediateBytes, out var immediateExt))
+        {
+            return new VideoJobResult(StatusJson: submitJson, VideoBytes: immediateBytes, FileExtension: immediateExt, VideoUrl: immediateUrl);
+        }
+
+        var jobId = submitDoc.RootElement.TryGetProperty("id", out var idEl)
+            ? idEl.GetString()
+            : null;
+
+        if (string.IsNullOrWhiteSpace(jobId))
+        {
+            // Some services may return jobId or job_id
+            if (submitDoc.RootElement.TryGetProperty("job_id", out var jidEl))
+            {
+                jobId = jidEl.GetString();
+            }
+            else if (submitDoc.RootElement.TryGetProperty("jobId", out var jIdEl))
+            {
+                jobId = jIdEl.GetString();
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(jobId))
+        {
+            return new VideoJobResult(StatusJson: submitJson, VideoBytes: null, FileExtension: null, VideoUrl: null);
+        }
+
+        var pollIntervalMs = _configuration.GetValue<int?>("AzureOpenAI:Video:PollIntervalMs") ?? 1500;
+        var maxAttempts = _configuration.GetValue<int?>("AzureOpenAI:Video:MaxPollAttempts") ?? 60;
+
+        string? lastJson = null;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Delay(pollIntervalMs, cancellationToken);
+
+            using var status = await client.GetAsync($"openai/v1/videos/{Uri.EscapeDataString(jobId)}", cancellationToken);
+            lastJson = await status.Content.ReadAsStringAsync(cancellationToken);
+            if (!status.IsSuccessStatusCode)
+            {
+                // Keep polling transient failures a couple times.
+                continue;
+            }
+
+            using var doc = System.Text.Json.JsonDocument.Parse(lastJson);
+            var root = doc.RootElement;
+
+            var statusStr = root.TryGetProperty("status", out var statusEl)
+                ? statusEl.GetString()
+                : null;
+
+            if (string.Equals(statusStr, "failed", StringComparison.OrdinalIgnoreCase))
+            {
+                return new VideoJobResult(StatusJson: lastJson, VideoBytes: null, FileExtension: null, VideoUrl: null);
+            }
+
+            if (!string.Equals(statusStr, "succeeded", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(statusStr, "completed", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (TryExtractVideoUrlOrBytes(root, out var url, out var bytes, out var ext))
+            {
+                if (bytes is { Length: > 0 })
+                {
+                    return new VideoJobResult(StatusJson: lastJson, VideoBytes: bytes, FileExtension: ext ?? ".mp4", VideoUrl: url);
+                }
+
+                if (!string.IsNullOrWhiteSpace(url))
+                {
+                    // If it's a URL, optionally try downloading bytes.
+                    try
+                    {
+                        using var download = await client.GetAsync(url, cancellationToken);
+                        if (download.IsSuccessStatusCode)
+                        {
+                            var downloadedBytes = await download.Content.ReadAsByteArrayAsync(cancellationToken);
+                            if (downloadedBytes.Length > 0)
+                            {
+                                var downloadedExt = download.Content.Headers.ContentType?.MediaType == "video/mp4" ? ".mp4" : ".bin";
+                                return new VideoJobResult(StatusJson: lastJson, VideoBytes: downloadedBytes, FileExtension: downloadedExt, VideoUrl: url);
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore download failure; still return URL.
+                    }
+
+                    return new VideoJobResult(StatusJson: lastJson, VideoBytes: null, FileExtension: null, VideoUrl: url);
+                }
+            }
+
+            // Some APIs return a completed job record with no output fields.
+            // Attempt common follow-up endpoints to fetch the generated bytes.
+            if (!string.IsNullOrWhiteSpace(jobId))
+            {
+                var fetched = await TryFetchVideoContentAsync(client, jobId, cancellationToken);
+                if (fetched is not null)
+                {
+                    return new VideoJobResult(StatusJson: lastJson, VideoBytes: fetched.Value.Bytes, FileExtension: fetched.Value.FileExtension, VideoUrl: fetched.Value.Url);
+                }
+            }
+
+            return new VideoJobResult(StatusJson: lastJson, VideoBytes: null, FileExtension: null, VideoUrl: null);
+        }
+
+        return new VideoJobResult(StatusJson: lastJson ?? submitJson, VideoBytes: null, FileExtension: null, VideoUrl: null);
+    }
+
+    private readonly record struct FetchedVideo(string? Url, byte[]? Bytes, string FileExtension);
+
+    private static async Task<FetchedVideo?> TryFetchVideoContentAsync(HttpClient client, string videoId, CancellationToken cancellationToken)
+    {
+        // Common patterns seen in async media APIs: either a direct content endpoint or a JSON wrapper with a URL.
+        // We try a small set of likely endpoints and accept either video bytes or a url payload.
+        string[] candidates =
+        [
+            $"openai/v1/videos/{Uri.EscapeDataString(videoId)}/content",
+            $"openai/v1/videos/{Uri.EscapeDataString(videoId)}/result",
+            $"openai/v1/videos/{Uri.EscapeDataString(videoId)}/download",
+            $"openai/v1/videos/{Uri.EscapeDataString(videoId)}/file"
+        ];
+
+        foreach (var path in candidates)
+        {
+            try
+            {
+                using var resp = await client.GetAsync(path, cancellationToken);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    continue;
+                }
+
+                var mediaType = resp.Content.Headers.ContentType?.MediaType;
+                if (!string.IsNullOrWhiteSpace(mediaType) && mediaType.Contains("json", StringComparison.OrdinalIgnoreCase))
+                {
+                    var json = await resp.Content.ReadAsStringAsync(cancellationToken);
+                    using var doc = System.Text.Json.JsonDocument.Parse(json);
+                    if (TryExtractVideoUrlOrBytes(doc.RootElement, out var url, out var bytes, out var ext))
+                    {
+                        if (bytes is { Length: > 0 })
+                        {
+                            return new FetchedVideo(url, bytes, ext ?? ".mp4");
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(url))
+                        {
+                            return new FetchedVideo(url, null, ".mp4");
+                        }
+                    }
+
+                    continue;
+                }
+
+                var contentBytes = await resp.Content.ReadAsByteArrayAsync(cancellationToken);
+                if (contentBytes is { Length: > 0 })
+                {
+                    var ext = mediaType is not null && mediaType.Contains("mp4", StringComparison.OrdinalIgnoreCase)
+                        ? ".mp4"
+                        : mediaType is not null && mediaType.Contains("webm", StringComparison.OrdinalIgnoreCase)
+                            ? ".webm"
+                            : ".bin";
+                    return new FetchedVideo(null, contentBytes, ext);
+                }
+            }
+            catch
+            {
+                // Ignore and continue to next candidate.
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryExtractVideoUrlOrBytes(System.Text.Json.JsonElement root, out string? url, out byte[]? bytes, out string? fileExtension)
+    {
+        url = null;
+        bytes = null;
+        fileExtension = null;
+
+        if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (root.TryGetProperty("url", out var urlEl)) url = urlEl.GetString();
+        if (string.IsNullOrWhiteSpace(url) && root.TryGetProperty("video_url", out var vUrlEl)) url = vUrlEl.GetString();
+        if (string.IsNullOrWhiteSpace(url) && root.TryGetProperty("content_url", out var cUrlEl)) url = cUrlEl.GetString();
+        if (string.IsNullOrWhiteSpace(url) && root.TryGetProperty("download_url", out var dUrlEl)) url = dUrlEl.GetString();
+        if (string.IsNullOrWhiteSpace(url) && root.TryGetProperty("result_url", out var rUrlEl)) url = rUrlEl.GetString();
+        if (string.IsNullOrWhiteSpace(url) && root.TryGetProperty("contentUrl", out var cUrlEl2)) url = cUrlEl2.GetString();
+        if (string.IsNullOrWhiteSpace(url) && root.TryGetProperty("downloadUrl", out var dUrlEl2)) url = dUrlEl2.GetString();
+        if (string.IsNullOrWhiteSpace(url) && root.TryGetProperty("fileUrl", out var fUrlEl2)) url = fUrlEl2.GetString();
+        if (string.IsNullOrWhiteSpace(url) && root.TryGetProperty("videoUrl", out var vUrlEl2)) url = vUrlEl2.GetString();
+
+        // data[0].url or data[0].b64_json
+        if (root.TryGetProperty("data", out var dataEl)
+            && dataEl.ValueKind == System.Text.Json.JsonValueKind.Array
+            && dataEl.GetArrayLength() > 0)
+        {
+            var first = dataEl[0];
+            if (string.IsNullOrWhiteSpace(url) && first.TryGetProperty("url", out var du)) url = du.GetString();
+
+            if (first.TryGetProperty("b64_json", out var b64El))
+            {
+                var b64 = b64El.GetString();
+                if (!string.IsNullOrWhiteSpace(b64))
+                {
+                    bytes = Convert.FromBase64String(b64);
+                    fileExtension = ".mp4";
+                    return true;
+                }
+            }
+        }
+
+        // result.url or output.url
+        if (string.IsNullOrWhiteSpace(url) && root.TryGetProperty("result", out var resultEl) && resultEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            if (resultEl.TryGetProperty("url", out var ru)) url = ru.GetString();
+            if (string.IsNullOrWhiteSpace(url) && resultEl.TryGetProperty("content_url", out var rcu)) url = rcu.GetString();
+            if (string.IsNullOrWhiteSpace(url) && resultEl.TryGetProperty("download_url", out var rdu)) url = rdu.GetString();
+            if (string.IsNullOrWhiteSpace(url) && resultEl.TryGetProperty("contentUrl", out var rcu2)) url = rcu2.GetString();
+            if (string.IsNullOrWhiteSpace(url) && resultEl.TryGetProperty("downloadUrl", out var rdu2)) url = rdu2.GetString();
+        }
+        if (string.IsNullOrWhiteSpace(url) && root.TryGetProperty("output", out var outputEl))
+        {
+            if (outputEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                if (outputEl.TryGetProperty("url", out var ou)) url = ou.GetString();
+                if (string.IsNullOrWhiteSpace(url) && outputEl.TryGetProperty("video_url", out var ovu)) url = ovu.GetString();
+                if (string.IsNullOrWhiteSpace(url) && outputEl.TryGetProperty("content_url", out var ocu)) url = ocu.GetString();
+                if (string.IsNullOrWhiteSpace(url) && outputEl.TryGetProperty("download_url", out var odu)) url = odu.GetString();
+                if (string.IsNullOrWhiteSpace(url) && outputEl.TryGetProperty("contentUrl", out var ocu2)) url = ocu2.GetString();
+                if (string.IsNullOrWhiteSpace(url) && outputEl.TryGetProperty("downloadUrl", out var odu2)) url = odu2.GetString();
+            }
+            else if (outputEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var item in outputEl.EnumerateArray())
+                {
+                    if (item.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                    if (TryExtractVideoUrlOrBytes(item, out var iu, out var ib, out var ie))
+                    {
+                        url ??= iu;
+                        bytes ??= ib;
+                        fileExtension ??= ie;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Fallback: some APIs bury URLs deeply; scan for the first http(s) string in any `*url*` field.
+        if (string.IsNullOrWhiteSpace(url) && TryFindFirstUrl(root, out var anyUrl))
+        {
+            url = anyUrl;
+        }
+
+        return !string.IsNullOrWhiteSpace(url) || (bytes is { Length: > 0 });
+    }
+
+    private static bool TryFindFirstUrl(System.Text.Json.JsonElement element, out string? url)
+    {
+        url = null;
+
+        switch (element.ValueKind)
+        {
+            case System.Text.Json.JsonValueKind.Object:
+                foreach (var prop in element.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.String)
+                    {
+                        var s = prop.Value.GetString();
+                        if (!string.IsNullOrWhiteSpace(s)
+                            && (s.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                                || s.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                            && prop.Name.Contains("url", StringComparison.OrdinalIgnoreCase))
+                        {
+                            url = s;
+                            return true;
+                        }
+                    }
+
+                    if (TryFindFirstUrl(prop.Value, out url))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+
+            case System.Text.Json.JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (TryFindFirstUrl(item, out url))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+
+            default:
+                return false;
+        }
+    }
+
     private async IAsyncEnumerable<AgentStreamUpdate> HandleMcpStreamingAsync(
         ProjectResponsesClient responseClient,
         CreateResponseOptions options,
@@ -265,22 +860,38 @@ public class AgentService : IAgentService, IAsyncDisposable
             latestResponse = await responseClient.CreateResponseAsync(nextOptions, cancellationToken);
             nextOptions = null;
 
-            foreach (var item in latestResponse.OutputItems)
-            {
-                if (item is McpToolCallApprovalRequestItem mcpApproval)
-                {
-                    yield return new ToolCallUpdate(mcpApproval.ServerLabel, "Requesting approval...");
+            var approvals = latestResponse.OutputItems
+                .OfType<McpToolCallApprovalRequestItem>()
+                .ToList();
 
-                    // Auto-approve for demo purposes
-                    nextOptions = new CreateResponseOptions
-                    {
-                        PreviousResponseId = latestResponse.Id
-                    };
+            if (approvals.Count > 0)
+            {
+                foreach (var approval in approvals)
+                {
+                    yield return new ToolCallUpdate(approval.ServerLabel, "Requesting approval...");
+                }
+
+                // Auto-approve for demo purposes.
+                // IMPORTANT: carry forward the original Instructions/Tools when continuing a response.
+                // Some SDK/service combinations will not execute the tool after approval unless tools are present.
+                nextOptions = new CreateResponseOptions
+                {
+                    PreviousResponseId = latestResponse.Id,
+                    Instructions = options.Instructions,
+                    StreamingEnabled = options.StreamingEnabled
+                };
+                foreach (var tool in options.Tools)
+                {
+                    nextOptions.Tools.Add(tool);
+                }
+
+                foreach (var approval in approvals)
+                {
                     nextOptions.InputItems.Add(ResponseItem.CreateMcpApprovalResponseItem(
-                        approvalRequestId: mcpApproval.Id,
+                        approvalRequestId: approval.Id,
                         approved: true));
 
-                    yield return new ToolResultUpdate(mcpApproval.ServerLabel, "Approved");
+                    yield return new ToolResultUpdate(approval.ServerLabel, "Approved");
                 }
             }
         }
@@ -315,24 +926,43 @@ public class AgentService : IAgentService, IAsyncDisposable
         if (_agentInfos.Count == 0)
         {
             // Return default list if not initialized
-            return Task.FromResult<IEnumerable<ChatAgentInfo>>(new[]
+            var defaults = new List<ChatAgentInfo>
             {
                 new ChatAgentInfo { Name = "Writer", Description = "Creates and edits content", Avatar = "W" },
                 new ChatAgentInfo { Name = "Reviewer", Description = "Reviews and provides feedback", Avatar = "R" },
-                new ChatAgentInfo { Name = "CodeAssistant", Description = "Helps with coding questions", Avatar = "C" },
-                new ChatAgentInfo { Name = "GitHub", Description = "GitHub assistant with tools", Avatar = "G", HasTools = true }
-            });
+                new ChatAgentInfo { Name = "Code", Description = "Coding + GitHub tools (MCP)", Avatar = "C", HasTools = true }
+            };
+
+            if (IsImageGenerationConfigured())
+            {
+                defaults.Add(new ChatAgentInfo { Name = "Image", Description = "Generates images", Avatar = "I", HasTools = true });
+            }
+
+            if (IsVideoGenerationConfigured())
+            {
+                defaults.Add(new ChatAgentInfo { Name = "Video", Description = "Generates videos", Avatar = "V", HasTools = true });
+            }
+
+            return Task.FromResult<IEnumerable<ChatAgentInfo>>(defaults);
         }
 
         return Task.FromResult<IEnumerable<ChatAgentInfo>>(_agentInfos.Values);
     }
 
-    private async Task<AgentVersion> CreateAgentAsync(string model, string name, string instructions)
+    private async Task<AgentVersion> CreateAgentAsync(string model, string name, string instructions, IEnumerable<ResponseTool>? tools = null)
     {
         var definition = new PromptAgentDefinition(model: model)
         {
             Instructions = instructions
         };
+
+        if (tools != null)
+        {
+            foreach (var tool in tools)
+            {
+                definition.Tools.Add(tool);
+            }
+        }
 
         var result = await _projectClient!.Agents.CreateAgentVersionAsync(
             agentName: name,
@@ -340,6 +970,25 @@ public class AgentService : IAgentService, IAsyncDisposable
 
         _logger.LogInformation("Created agent: {Name} v{Version}", result.Value.Name, result.Value.Version);
         return result.Value;
+    }
+
+    // Per Foundry docs, image generation requests must include:
+    // x-ms-oai-image-generation-deployment: <image model deployment name>
+    internal sealed class ImageGenerationHeaderPolicy(string imageDeployment) : PipelinePolicy
+    {
+        private const string HeaderName = "x-ms-oai-image-generation-deployment";
+
+        public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+        {
+            message.Request.Headers.Add(HeaderName, imageDeployment);
+            ProcessNext(message, pipeline, currentIndex);
+        }
+
+        public override async ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+        {
+            message.Request.Headers.Add(HeaderName, imageDeployment);
+            await ProcessNextAsync(message, pipeline, currentIndex);
+        }
     }
 
     public async ValueTask DisposeAsync()
