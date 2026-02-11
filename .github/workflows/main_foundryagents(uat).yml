@@ -14,7 +14,9 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: read #This is required for actions/checkout
-
+    defaults:
+      run:
+        working-directory: ./WebApp
     steps:
       - uses: actions/checkout@v4
 
@@ -51,9 +53,9 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_6D8998B5E02B4206819712AAE27F9663 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_1E458F984B7D45DABCE869A7B1F1ABDC }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_98D0D4425F5B4B848F293A582231CB19 }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_86D10FBCA8414F85ACE657550D8B9401 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_4243E1B1AEA2470D8EA671D715189452 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_C15046E2DEC84D83B5F600A5F00F0134 }}
 
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
@@ -62,4 +64,6 @@ jobs:
           app-name: 'foundryagents'
           slot-name: 'uat'
           package: .
+
           
+
