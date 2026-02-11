@@ -44,6 +44,10 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Serve runtime content from wwwroot (e.g., uploaded images under /uploads).
+app.UseStaticFiles();
+
 app.UseRouting();
 
 app.UseSession();

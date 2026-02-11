@@ -216,6 +216,9 @@ class ChatApp {
 
         if (!message || !this.isConnected) return;
 
+        // Snapshot attachments before we clear them.
+        const outgoingAttachments = Array.isArray(this.attachedFiles) ? [...this.attachedFiles] : [];
+
         // Clear input and reset height
         input.value = '';
         input.style.height = 'auto';
@@ -224,7 +227,7 @@ class ChatApp {
         this.hideWelcomeMessage();
 
         // Add user message to UI
-        this.addMessageToUI('user', message);
+        this.addMessageToUI('user', message, outgoingAttachments);
 
         // Show typing indicator
         this.showTypingIndicator();
@@ -284,9 +287,24 @@ class ChatApp {
         this.scrollToBottom();
     }
 
-    addMessageToUI(role, content) {
+    addMessageToUI(role, content, attachments = []) {
         const messageList = document.getElementById('messageList');
         const isUser = role === 'user';
+
+        const imageAttachments = (attachments || [])
+            .filter(a => (a.contentType || '').toLowerCase().startsWith('image/') && a.storagePath);
+
+        const attachmentsHtml = imageAttachments.length > 0
+            ? `
+                <div class="message-attachments" style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                    ${imageAttachments.map(a => `
+                        <a href="${a.storagePath}" target="_blank" rel="noopener noreferrer" title="${this.escapeHtml(a.fileName || 'image')}">
+                            <img src="${a.storagePath}" alt="${this.escapeHtml(a.fileName || 'image')}" style="width: 84px; height: 84px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border-color);" />
+                        </a>
+                    `).join('')}
+                </div>
+              `
+            : '';
 
         const messageEl = document.createElement('div');
         messageEl.className = `message ${isUser ? 'message-user' : 'message-assistant'}`;
@@ -298,6 +316,7 @@ class ChatApp {
                     <span class="message-time">${this.formatTime(new Date())}</span>
                 </div>
                 <div class="message-body">${isUser ? this.escapeHtml(content) : marked.parse(content)}</div>
+                ${attachmentsHtml}
             </div>
         `;
 
@@ -635,12 +654,20 @@ class ChatApp {
         const previewList = filePreview.querySelector('.file-preview-list');
 
         // Re-render preview list
-        previewList.innerHTML = this.attachedFiles.map(f => `
-            <div class="file-preview-item">
-                <span>${f.fileName}</span>
-                <button type="button" onclick="chatApp.removeFile('${f.id}')">&times;</button>
-            </div>
-        `).join('');
+        previewList.innerHTML = this.attachedFiles.map(f => {
+            const isImage = (f.contentType || '').toLowerCase().startsWith('image/') && f.storagePath;
+            const previewHtml = isImage
+                ? `<img src="${f.storagePath}" alt="${this.escapeHtml(f.fileName || 'image')}" style="width: 28px; height: 28px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border-color);" />`
+                : '';
+
+            return `
+                <div class="file-preview-item">
+                    ${previewHtml}
+                    <span>${this.escapeHtml(f.fileName || '')}</span>
+                    <button type="button" onclick="chatApp.removeFile('${f.id}')">&times;</button>
+                </div>
+            `;
+        }).join('');
 
         if (this.attachedFiles.length === 0) {
             filePreview.classList.add('hidden');
