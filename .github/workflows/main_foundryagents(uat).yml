@@ -16,7 +16,7 @@ jobs:
       contents: read #This is required for actions/checkout
     defaults:
       run:
-        working-directory: ./global-scripts
+        working-directory: ./WebApp
     steps:
       - uses: actions/checkout@v4
 
@@ -66,3 +66,4 @@ jobs:
           package: .
 
           
+
