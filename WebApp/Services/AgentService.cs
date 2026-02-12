@@ -5,6 +5,7 @@ using System.ClientModel.Primitives;
 using System.ClientModel;
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
+using Azure.Core;
 using Azure.Identity;
 using OpenAI;
 using OpenAI.Images;
@@ -45,10 +46,7 @@ public class AgentService : IAgentService, IAsyncDisposable
             return;
         }
 
-        Azure.Core.TokenCredential credential = string.IsNullOrEmpty(
-            Environment.GetEnvironmentVariable("MSI_ENDPOINT"))
-            ? new DefaultAzureCredential()
-            : new ManagedIdentityCredential();
+        TokenCredential credential = CreateTokenCredential(configuration, logger);
 
         var imageDeployment = GetImageGenerationDeploymentName();
         if (!string.IsNullOrWhiteSpace(imageDeployment))
@@ -63,6 +61,34 @@ public class AgentService : IAgentService, IAsyncDisposable
         {
             _projectClient = new AIProjectClient(new Uri(endpoint), credential);
         }
+    }
+
+    private static TokenCredential CreateTokenCredential(IConfiguration configuration, ILogger logger)
+    {
+        // In Azure App Service, prefer Managed Identity explicitly.
+        // WEBSITE_INSTANCE_ID is a reliable signal for App Service environments.
+        var isAppService = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WEBSITE_INSTANCE_ID"));
+
+        // Support user-assigned managed identity via client id.
+        var managedIdentityClientId = GetStringConfig(configuration, "AZURE_MANAGED_IDENTITY_CLIENT_ID", "Azure:ManagedIdentityClientId")
+            ?? Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+
+        if (isAppService)
+        {
+            logger.LogInformation("Using ManagedIdentityCredential for Azure App Service.");
+            return string.IsNullOrWhiteSpace(managedIdentityClientId)
+                ? new ManagedIdentityCredential()
+                : new ManagedIdentityCredential(managedIdentityClientId);
+        }
+
+        // Local/dev: use an explicit chain (no DefaultAzureCredential).
+        // - VisualStudioCredential works in local dev on Windows when signed in.
+        // - AzureCliCredential works when `az login` is available.
+        // - EnvironmentCredential supports service-principal env vars (AZURE_TENANT_ID/AZURE_CLIENT_ID/AZURE_CLIENT_SECRET).
+        return new ChainedTokenCredential(
+            new VisualStudioCredential(),
+            new AzureCliCredential(),
+            new EnvironmentCredential());
     }
 
     private string? GetImageGenerationDeploymentName()
